@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
+import { matchPlugin } from "./server/matchPlugin";
 
 export default defineConfig({
+  plugins: [matchPlugin()],
   server: {
     port: 5173,
     host: true,

@@ -7,6 +7,7 @@ export class MainMenu {
     root: HTMLElement,
     onRace: () => void,
     onFree: () => void,
+    onDuel: () => void,
     onToggleCamera: () => void,
   ) {
     this.element = document.createElement("div");
@@ -15,8 +16,9 @@ export class MainMenu {
       <div class="menu-card">
         <div class="menu-kicker">Prototipo</div>
         <h1 class="menu-title">SKY FLIGHT</h1>
-        <p class="menu-tagline">Circuito, fantasma y medallas</p>
+        <p class="menu-tagline">${import.meta.env.DEV ? "Circuito, 1 vs 1 y medallas" : "Circuito y vuelo libre"}</p>
         <div class="menu-actions">
+          ${import.meta.env.DEV ? `<button class="ui-button primary" type="button" data-duel>1 vs 1 · Admin</button>` : ""}
           <button class="ui-button primary" type="button" data-race>Circuito</button>
           <button class="ui-button" type="button" data-free>Vuelo libre</button>
           <button class="ui-button" type="button" data-controls>Controles</button>
@@ -45,6 +47,7 @@ export class MainMenu {
     this.controlsSheet = this.element.querySelector("[data-controls-sheet]")!;
     this.cameraButton = this.element.querySelector("[data-camera]")!;
 
+    this.element.querySelector("[data-duel]")?.addEventListener("click", onDuel);
     this.element.querySelector("[data-race]")?.addEventListener("click", onRace);
     this.element.querySelector("[data-free]")?.addEventListener("click", onFree);
     this.element.querySelector("[data-controls]")?.addEventListener("click", () => {

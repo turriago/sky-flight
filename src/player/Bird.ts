@@ -6,6 +6,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   Object3D,
+  Quaternion,
   SphereGeometry,
   type Object3DEventMap,
 } from "three";
@@ -15,15 +16,16 @@ import type { FlightController } from "./FlightController";
 export class Bird {
   readonly group = new Group();
   private readonly visual = new Group();
+  private readonly remoteQ = new Quaternion();
   private animation: BirdAnimation;
   private mixer: AnimationMixer | null = null;
   private usingPlaceholder = true;
 
-  constructor() {
+  constructor(bodyColor = 0xc4783a, wingColor = 0x8a4d28) {
     this.visual.name = "BirdVisual";
     this.group.name = "Bird";
     this.group.add(this.visual);
-    this.buildPlaceholder();
+    this.buildPlaceholder(bodyColor, wingColor);
     this.animation = new BirdAnimation(this.visual);
   }
 
@@ -50,9 +52,23 @@ export class Bird {
     this.animation.update(dt, flight);
   }
 
-  private buildPlaceholder(): void {
+  updateRemote(dt: number, x: number, y: number, z: number, qx: number, qy: number, qz: number, qw: number, speed: number): void {
+    const blend = 1 - Math.exp(-14 * dt);
+    this.group.position.x += (x - this.group.position.x) * blend;
+    this.group.position.y += (y - this.group.position.y) * blend;
+    this.group.position.z += (z - this.group.position.z) * blend;
+    this.group.quaternion.slerp(this.remoteQ.set(qx, qy, qz, qw), blend);
+    this.mixer?.update(dt);
+    this.animation.update(dt, {
+      pose: speed > 28 ? "fly" : "plane",
+      speedMps: speed,
+      roll: 0,
+    });
+  }
+
+  private buildPlaceholder(bodyColor: number, wingColor: number): void {
     const bodyMat = new MeshStandardMaterial({
-      color: 0xc4783a,
+      color: bodyColor,
       roughness: 0.62,
       metalness: 0.04,
     });
@@ -65,7 +81,7 @@ export class Bird {
       roughness: 0.5,
     });
     const wingMat = new MeshStandardMaterial({
-      color: 0x8a4d28,
+      color: wingColor,
       roughness: 0.58,
     });
 

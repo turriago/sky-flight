@@ -158,6 +158,16 @@ export class Course {
     this.bronzeTime = length / 12.2;
   }
 
+  beginRace(): void {
+    if (this.phase !== "armed") {
+      return;
+    }
+    this.phase = "racing";
+    this.flown = 0;
+    this.recordAcc = 0;
+    this.recording = [];
+  }
+
   arm(): void {
     this.phase = "armed";
     this.nextIndex = 0;

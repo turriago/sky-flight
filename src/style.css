@@ -27,6 +27,10 @@ body,
   background: var(--sky-ink);
   font-family: "Outfit", "Segoe UI", sans-serif;
   color: var(--text);
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #game-canvas {
@@ -388,6 +392,189 @@ body,
   margin-top: 8px;
   font-size: 12px;
   color: var(--danger);
+}
+
+.duel-panel {
+  position: absolute;
+  top: clamp(12px, 2vw, 24px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  pointer-events: none;
+  width: min(420px, calc(100vw - 24px));
+}
+
+.duel-panel.player {
+  top: 10px;
+}
+
+.duel-card {
+  pointer-events: auto;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 18px 18px 16px;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.duel-kicker {
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.duel-title {
+  font-size: 28px;
+  margin: 6px 0 8px;
+}
+
+.duel-status,
+.duel-url {
+  color: var(--muted);
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.duel-qr {
+  display: block;
+  width: min(240px, 70vw);
+  height: auto;
+  margin: 12px auto;
+  border-radius: 12px;
+}
+
+.duel-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.duel-slot {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 8px;
+  color: var(--muted);
+}
+
+.duel-slot.on.slot-0 {
+  color: var(--accent-2);
+  border-color: rgba(243, 194, 122, 0.45);
+}
+
+.duel-slot.on.slot-1 {
+  color: var(--accent);
+  border-color: rgba(126, 208, 192, 0.45);
+}
+
+.duel-slot strong {
+  display: block;
+}
+
+.duel-score {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.duel-banner {
+  font-size: 64px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent-2);
+  text-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+.duel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.duel-panel.compact .duel-qr,
+.duel-panel.compact .duel-url,
+.duel-panel.compact .duel-slots,
+.duel-panel.compact .duel-kicker {
+  display: none;
+}
+
+.duel-panel.compact .duel-card {
+  padding: 10px 14px;
+}
+
+.duel-panel.compact .duel-title {
+  font-size: 18px;
+  margin: 0;
+}
+
+.touch-pad {
+  position: absolute;
+  inset: auto 0 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 16px calc(12px + env(safe-area-inset-bottom));
+  pointer-events: none;
+  z-index: 5;
+}
+
+.touch-stick,
+.touch-btn {
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-stick {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: rgba(8, 18, 26, 0.45);
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.touch-knob {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--accent);
+  top: 50%;
+  left: 50%;
+  margin: -21px 0 0 -21px;
+}
+
+.touch-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.touch-btn {
+  min-width: 118px;
+  min-height: 56px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--text);
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.touch-btn.primary {
+  min-height: 88px;
+  background: linear-gradient(180deg, #8ad7c8, #5ea897);
+  color: #082017;
+  font-weight: 700;
 }
 
 @media (max-width: 720px) {

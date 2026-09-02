@@ -2,12 +2,25 @@
 
 Videojuego 3D de exploración aérea para navegador. El jugador controla un ave sobre un valle low-poly con montañas, bosques, agua, nubes y niebla.
 
-Hay dos modos:
+Hay tres modos:
 
-- **Circuito:** carrera cronometrada por aros, con fantasma del récord, choques y medallas.
+- **1 vs 1:** dos celulares (Android o iPhone) juegan la misma carrera. El PC es el **admin** y mira la competencia en vivo.
+- **Circuito:** carrera cronometrada en solitario, con fantasma, choques y medallas.
 - **Vuelo libre:** exploración sin cronómetro.
 
-Se vuela con teclado, con el cuerpo (webcam + MediaPipe Pose), o con ambos. El teclado tiene prioridad si hay teclas pulsadas.
+### 1 vs 1 por QR
+
+En el PC, con `npm run dev`, abre la **IP de la red** (no `localhost`), por ejemplo `http://192.168.1.20:5173`. Pulsa **1 vs 1 · Admin**.
+
+1. Escanea el QR con la cámara del celular (Android o iPhone).
+2. El segundo jugador hace lo mismo.
+3. En admin pulsa **Iniciar carrera**.
+4. En el teléfono: palanca izquierda para girar y subir/bajar; **Acelerar** y **Freno** a la derecha.
+5. El primero que complete los aros gana. El admin ve las dos aves (naranja y cian) en tiempo real.
+
+Los tres dispositivos deben estar en la **misma Wi‑Fi**. Si el QR no abre en el celular, usa la IP `192.168…` de la red (no `localhost`) y permite Node.js en el firewall de Windows. El iPhone no usa la webcam del cuerpo en este modo (Safari pide HTTPS); se juega con el tacto.
+
+Se vuela con teclado, con el cuerpo (webcam + MediaPipe Pose) en PC, o con ambos. El teclado tiene prioridad si hay teclas pulsadas.
 
 No usa Unity, Godot ni Unreal. Todo corre en el navegador (TypeScript, Vite, Three.js).
 
@@ -135,10 +148,15 @@ Consulta [ASSETS.md](./ASSETS.md). Kenney Nature Kit es CC0. Three.js es MIT. Me
 
 ### Vercel
 
-1. Conecta este repositorio.
-2. Framework preset: Vite.
-3. Build command: `npm run build`
-4. Output directory: `dist`
+En [vercel.com/turriago1](https://vercel.com/turriago1): **Add New → Project**, importa `turriago/sky-flight` (GitHub).
+
+- Framework: **Vite**
+- Build command: `npm run build`
+- Output: `dist`
+
+La web pública sirve **Circuito**, **vuelo libre** y cámara (HTTPS). El **1 vs 1 por QR** no corre en Vercel: usa un WebSocket de `npm run dev` en la misma Wi‑Fi.
+
+Si GitHub no lista el repo, **Adjust GitHub App Permissions** y da acceso a `sky-flight`.
 
 ### Netlify
 

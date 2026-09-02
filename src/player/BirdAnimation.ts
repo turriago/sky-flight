@@ -1,6 +1,12 @@
 import { Object3D } from "three";
-import type { FlightController } from "./FlightController";
+import type { FlightPose } from "./FlightController";
 import { expDamp } from "../utils/MathUtils";
+
+export interface FlapSource {
+  pose: FlightPose;
+  speedMps: number;
+  roll: number;
+}
 
 interface WingRefs {
   left?: Object3D;
@@ -26,7 +32,7 @@ export class BirdAnimation {
     this.wings.right = visual.getObjectByName("WingRight") ?? undefined;
   }
 
-  update(dt: number, flight: FlightController): void {
+  update(dt: number, flight: FlapSource): void {
     this.time += dt;
 
     const pose = flight.pose;

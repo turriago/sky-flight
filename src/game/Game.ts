@@ -15,14 +15,19 @@ import { FollowCamera } from "../camera/FollowCamera";
 import { KeyboardController } from "../input/KeyboardController";
 import type { InputController } from "../input/InputController";
 import { preferOverride, createFlightInput, type FlightInput } from "../input/FlightInput";
+import { TouchController } from "../input/TouchController";
 import { PoseController } from "../input/PoseController";
 import { Bird } from "../player/Bird";
 import { Ghost } from "../player/Ghost";
 import { FlightController } from "../player/FlightController";
 import { HUD } from "../ui/HUD";
 import { MainMenu } from "../ui/MainMenu";
+import { DuelPanel } from "../ui/DuelPanel";
 import { WebcamPanel } from "../ui/WebcamPanel";
 import { PoseDetector } from "../vision/PoseDetector";
+import { MatchClient } from "../net/MatchClient";
+import { duelJoinUrl } from "../net/joinUrl";
+import { randomRoomCode, type DuelMessage } from "../net/protocol";
 import { COURSE, POSE } from "../utils/Constants";
 import { World } from "./World";
 
@@ -38,12 +43,16 @@ export class Game {
   private readonly detector = new PoseDetector();
   private readonly flight = new FlightController();
   private readonly bird = new Bird();
+  private readonly rival = new Bird(0x2aa8c4, 0x1a6a78);
   private readonly ghost: Ghost;
   private readonly followCamera: FollowCamera;
   private readonly world: World;
   private readonly hud: HUD;
   private readonly menu: MainMenu;
+  private readonly duelPanel: DuelPanel;
   private readonly webcam: WebcamPanel;
+  private readonly touch: TouchController;
+  private readonly match = new MatchClient();
   private readonly demoInput: FlightInput = createFlightInput();
   private readonly mixedInput: FlightInput = createFlightInput();
   private readonly size = new Vector2();
@@ -52,7 +61,10 @@ export class Game {
   private running = false;
   private cameraBusy = false;
   private mode: "free" | "race" = "free";
+  private session: "solo" | "admin" | "player" = "solo";
   private hitCooldown = 0;
+  private joinUrl = "";
+  private lastMatchPhase = "";
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.scene.background = new Color(0xa9c6d2);
@@ -76,6 +88,8 @@ export class Game {
     this.world = new World(this.scene);
     void this.world.populate(this.assets);
     this.scene.add(this.bird.group);
+    this.rival.group.visible = false;
+    this.scene.add(this.rival.group);
     this.ghost = new Ghost(this.bird.visualRoot);
     this.scene.add(this.ghost.group);
 
@@ -90,14 +104,24 @@ export class Game {
       uiRoot,
       () => { void this.startPlay("race"); },
       () => { void this.startPlay("free"); },
+      () => { void this.startAdminDuel(); },
       () => { void this.toggleCamera(); },
     );
+    this.duelPanel = new DuelPanel(uiRoot, () => this.match.startMatch(), () => this.match.resetMatch());
     this.webcam = new WebcamPanel(uiRoot);
+    this.touch = new TouchController(uiRoot);
+    this.match.on((message) => { void this.onMatchMessage(message); });
 
     this.flight.reset(6, 42, 118, 0);
     this.followCamera.snapTo(this.flight);
     window.addEventListener("resize", this.handleResize);
     window.addEventListener("keydown", this.handleHotkeys);
+
+    const params = new URLSearchParams(location.search);
+    const room = params.get("duel");
+    if (import.meta.env.DEV && room && params.get("admin") !== "1") {
+      void this.joinAsPlayer(room);
+    }
   }
 
   start(): void {
@@ -117,6 +141,8 @@ export class Game {
     this.detector.stop();
     this.webcam.stopStream();
     this.audio.dispose();
+    this.touch.dispose();
+    this.match.close();
     this.assets.clear();
     window.removeEventListener("resize", this.handleResize);
     window.removeEventListener("keydown", this.handleHotkeys);
@@ -124,11 +150,16 @@ export class Game {
   }
 
   private startPlay = async (mode: "free" | "race"): Promise<void> => {
+    if (this.session !== "solo") {
+      return;
+    }
     this.playing = true;
     this.mode = mode;
     this.menu.hide();
     this.hud.show();
     this.pose.setResting(false);
+    this.rival.group.visible = false;
+    this.touch.hide();
     if (mode === "race") {
       this.world.course.arm();
       this.ghost.setTape(this.world.course.ghostPath);
@@ -144,8 +175,144 @@ export class Game {
     await this.audio.start();
   };
 
+  private startAdminDuel = async (): Promise<void> => {
+    const room = randomRoomCode();
+    history.replaceState(null, "", `?admin=1&duel=${room}`);
+    this.session = "admin";
+    this.mode = "race";
+    this.playing = true;
+    this.menu.hide();
+    this.hud.hide();
+    this.ghost.hide();
+    this.rival.group.visible = true;
+    this.world.course.arm();
+    this.joinUrl = await duelJoinUrl(room);
+    this.match.connect("admin", room);
+    this.placeAtSlot(0);
+    this.placeRivalAtSlot(1);
+    this.followCamera.updatePair(
+      0.016,
+      this.bird.group.position.x, this.bird.group.position.y, this.bird.group.position.z,
+      this.rival.group.position.x, this.rival.group.position.y, this.rival.group.position.z,
+    );
+    await this.refreshDuelPanel();
+    try {
+      await this.audio.start();
+    } catch {
+      // el admin en PC suele permitir audio
+    }
+  };
+
+  private joinAsPlayer = async (room: string): Promise<void> => {
+    this.session = "player";
+    this.mode = "race";
+    this.playing = true;
+    this.menu.hide();
+    this.hud.hide();
+    this.ghost.hide();
+    this.rival.group.visible = true;
+    this.touch.show();
+    this.world.course.arm();
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.match.connect("player", room.toUpperCase());
+    const unlockAudio = (): void => {
+      void this.audio.start();
+      window.removeEventListener("pointerdown", unlockAudio);
+    };
+    window.addEventListener("pointerdown", unlockAudio, { once: true });
+    try {
+      await this.audio.start();
+    } catch {
+      // iOS pide un toque antes de activar el audio
+    }
+    await this.refreshDuelPanel();
+  };
+
+  private async onMatchMessage(message: DuelMessage): Promise<void> {
+    if (this.session === "solo") {
+      return;
+    }
+    if (this.match.phase !== this.lastMatchPhase) {
+      this.lastMatchPhase = this.match.phase;
+      if (this.match.phase === "lobby" || this.match.phase === "countdown") {
+        this.resetDuelCrafts();
+      }
+      if (this.match.phase === "racing") {
+        this.world.course.beginRace();
+      }
+    }
+    if (message.t === "pose") {
+      if (this.match.phase === "racing" || this.match.phase === "finished") {
+        this.duelPanel.setRings(this.liveRings(), this.world.course.status.total);
+      }
+      return;
+    }
+    await this.refreshDuelPanel();
+  }
+
+  private resetDuelCrafts(): void {
+    const slot = this.session === "player" ? (this.match.slot ?? 0) : 0;
+    this.placeAtSlot(slot);
+    this.placeRivalAtSlot(slot === 0 ? 1 : 0);
+    this.world.course.arm();
+    this.hitCooldown = 0.6;
+  }
+
+  private placeAtSlot(slot: 0 | 1): void {
+    const pose = this.slotStart(slot);
+    this.flight.reset(pose.x, pose.y, pose.z, pose.yaw);
+    this.bird.group.position.set(pose.x, pose.y, pose.z);
+  }
+
+  private placeRivalAtSlot(slot: 0 | 1): void {
+    const pose = this.slotStart(slot);
+    this.rival.group.position.set(pose.x, pose.y, pose.z);
+  }
+
+  private slotStart(slot: 0 | 1): { x: number; y: number; z: number; yaw: number } {
+    const start = this.world.course.start;
+    const side = slot === 0 ? -3.4 : 3.4;
+    return {
+      x: start.x + Math.cos(this.world.course.startYaw) * side,
+      y: start.y,
+      z: start.z + Math.sin(this.world.course.startYaw) * side,
+      yaw: this.world.course.startYaw,
+    };
+  }
+
+  private async refreshDuelPanel(): Promise<void> {
+    if (this.session === "solo") {
+      this.duelPanel.hide();
+      return;
+    }
+    await this.duelPanel.render({
+      role: this.session,
+      room: this.match.room,
+      phase: this.match.phase,
+      countdown: this.match.countdown,
+      players: this.match.players,
+      joinUrl: this.joinUrl,
+      error: this.match.error,
+      winner: this.match.winner,
+      times: this.match.times,
+      rings: this.liveRings(),
+      total: this.world.course.status.total,
+    });
+  }
+
+  private liveRings(): [number, number] {
+    const localRings = this.world.course.status.passed;
+    const other = this.match.slot === 0 ? this.match.lastPose[1] : this.match.lastPose[0];
+    if (this.session === "admin") {
+      return [this.match.lastPose[0]?.rings ?? 0, this.match.lastPose[1]?.rings ?? 0];
+    }
+    return this.match.slot === 0
+      ? [localRings, other?.rings ?? 0]
+      : [other?.rings ?? 0, localRings];
+  }
+
   private restartRace(): void {
-    if (!this.playing || this.mode !== "race") {
+    if (!this.playing || this.mode !== "race" || this.session !== "solo") {
       return;
     }
     this.pose.setResting(false);
@@ -159,6 +326,10 @@ export class Game {
 
   private tick = (): void => {
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    if (this.session === "admin") {
+      this.tickAdmin(dt);
+      return;
+    }
     if (this.detector.running) {
       this.detector.detect();
     }
@@ -167,17 +338,29 @@ export class Game {
     this.webcam.drawPose(this.detector.latest?.landmarks ?? null);
     const keyboard = this.keyboard.update();
     const usingKeys = inputActive(keyboard);
-    const input = this.playing
-      ? (this.detector.running ? preferOverride(pose, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE) : keyboard)
-      : this.updateDemoInput();
-    const cruise = this.playing && this.pose.resting && !usingKeys;
+    const touch = this.touch.update();
+    if (this.session === "player" && this.match.phase !== "racing") {
+      this.demoInput.throttle = 0;
+      this.demoInput.yaw = 0;
+      this.demoInput.pitch = 0;
+      this.demoInput.roll = 0;
+    }
+    const live = this.session === "player"
+      ? (this.match.phase === "racing" ? preferOverride(touch, keyboard, this.mixedInput, 0.12) : this.demoInput)
+      : this.playing
+        ? (this.detector.running ? preferOverride(pose, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE) : keyboard)
+        : this.updateDemoInput();
+    const cruise = this.session === "solo" && this.playing && this.pose.resting && !usingKeys;
 
-    this.flight.update(dt, input, (x, z) => this.world.getHeightAt(x, z), cruise);
+    this.flight.update(dt, live, (x, z) => this.world.getHeightAt(x, z), cruise);
     this.bird.update(dt, this.flight);
     this.followCamera.update(dt, this.flight);
-    if (this.playing && this.mode === "race") {
+    if (this.session === "player") {
+      this.syncDuelPlayer(dt);
+    }
+    if (this.playing && this.mode === "race" && (this.session === "solo" || this.match.phase === "racing")) {
       this.hitCooldown = Math.max(0, this.hitCooldown - dt);
-      const racing = this.world.course.status.phase === "racing";
+      const racing = this.world.course.status.phase === "racing" || this.session === "player";
       if (racing && this.hitCooldown <= 0) {
         const hit = this.world.hitTest(
           this.flight.position.x,
@@ -191,16 +374,65 @@ export class Game {
         }
       }
       this.world.course.update(dt, this.flight.position, this.flight.quaternion);
-      this.ghost.update(this.world.course.status.flown, dt);
+      if (this.session === "solo") {
+        this.ghost.update(this.world.course.status.flown, dt);
+      }
     }
     this.world.update(dt);
-    this.hud.update(this.flight);
-    this.hud.setRace(this.world.course.status);
-    this.hud.setPoseInput(pose, this.detector.running && this.pose.visible, this.pose.resting);
-    this.updateCameraStatus();
+    if (this.session === "solo") {
+      this.hud.update(this.flight);
+      this.hud.setRace(this.world.course.status);
+      this.hud.setPoseInput(pose, this.detector.running && this.pose.visible, this.pose.resting);
+      this.updateCameraStatus();
+    }
     this.audio.setFlightLevel(this.flight.speedKmh, this.flight.altitude);
     this.renderer.render(this.scene, this.camera);
   };
+
+  private tickAdmin(dt: number): void {
+    const a = this.match.lastPose[0];
+    const b = this.match.lastPose[1];
+    if (a) {
+      this.bird.updateRemote(dt, a.x, a.y, a.z, a.qx, a.qy, a.qz, a.qw, a.spd);
+    }
+    if (b) {
+      this.rival.updateRemote(dt, b.x, b.y, b.z, b.qx, b.qy, b.qz, b.qw, b.spd);
+    }
+    this.followCamera.updatePair(
+      dt,
+      this.bird.group.position.x, this.bird.group.position.y, this.bird.group.position.z,
+      this.rival.group.position.x, this.rival.group.position.y, this.rival.group.position.z,
+    );
+    this.world.update(dt);
+    this.audio.setFlightLevel(((a?.spd ?? 20) + (b?.spd ?? 20)) * 1.8, this.bird.group.position.y);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private syncDuelPlayer(dt: number): void {
+    const otherSlot = this.match.slot === 0 ? 1 : 0;
+    const other = this.match.lastPose[otherSlot];
+    if (other) {
+      this.rival.updateRemote(dt, other.x, other.y, other.z, other.qx, other.qy, other.qz, other.qw, other.spd);
+    }
+    if (this.match.slot === null) {
+      return;
+    }
+    const status = this.world.course.status;
+    this.match.sendPose(dt, {
+      slot: this.match.slot,
+      x: this.flight.position.x,
+      y: this.flight.position.y,
+      z: this.flight.position.z,
+      qx: this.flight.quaternion.x,
+      qy: this.flight.quaternion.y,
+      qz: this.flight.quaternion.z,
+      qw: this.flight.quaternion.w,
+      spd: this.flight.speed,
+      rings: status.passed,
+      time: status.time,
+      done: status.phase === "finished" ? 1 : 0,
+    });
+  }
 
   private async toggleCamera(): Promise<void> {
     if (this.cameraBusy) {
