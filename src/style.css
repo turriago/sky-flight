@@ -353,8 +353,130 @@ body,
   box-shadow: var(--shadow);
 }
 
-.webcam-panel.tracking {
-  border-color: rgba(126, 208, 192, 0.65);
+.webcam-panel.player {
+  top: auto;
+  right: auto;
+  left: 50%;
+  bottom: calc(118px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(220px, 58vw);
+  z-index: 6;
+}
+
+.webcam-panel.player.compact {
+  left: 10px;
+  right: auto;
+  transform: none;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  width: min(128px, 32vw);
+}
+
+.body-coach {
+  position: absolute;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 7;
+  pointer-events: none;
+  width: min(440px, calc(100vw - 16px));
+}
+
+.body-coach-card {
+  pointer-events: auto;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 14px 16px 12px;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.body-coach-kicker {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.body-coach h2 {
+  font-size: 22px;
+  margin: 4px 0 6px;
+}
+
+.body-coach-lead,
+.body-coach-status {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.body-coach-steps {
+  text-align: left;
+  margin: 10px 0 8px 18px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.body-coach-gestures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin: 8px 0;
+}
+
+.body-coach-gestures span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--accent-2);
+}
+
+.body-coach-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.body-coach.camera-on .body-coach-lead,
+.body-coach.camera-on .body-coach-gestures {
+  display: none;
+}
+
+.body-coach.racing {
+  bottom: auto;
+  top: 72px;
+  width: min(360px, calc(100vw - 16px));
+}
+
+.body-coach.racing .body-coach-card {
+  padding: 8px 12px;
+}
+
+.body-coach.racing h2,
+.body-coach.racing .body-coach-actions,
+.body-coach.racing .body-coach-kicker {
+  display: none;
+}
+
+.touch-pad.fallback {
+  opacity: 0.38;
+}
+
+.touch-pad.fallback .touch-stick,
+.touch-pad.fallback .touch-btn {
+  min-width: 72px;
+  min-height: 44px;
+}
+
+.touch-pad.fallback .touch-stick {
+  width: 84px;
+  height: 84px;
+}
+
+.touch-pad.fallback .touch-btn.primary {
+  min-height: 56px;
 }
 
 .webcam-frame {

@@ -23,6 +23,7 @@ import { FlightController } from "../player/FlightController";
 import { HUD } from "../ui/HUD";
 import { MainMenu } from "../ui/MainMenu";
 import { DuelPanel } from "../ui/DuelPanel";
+import { BodyCoach } from "../ui/BodyCoach";
 import { WebcamPanel } from "../ui/WebcamPanel";
 import { PoseDetector } from "../vision/PoseDetector";
 import { MatchClient } from "../net/MatchClient";
@@ -50,6 +51,7 @@ export class Game {
   private readonly hud: HUD;
   private readonly menu: MainMenu;
   private readonly duelPanel: DuelPanel;
+  private readonly coach: BodyCoach;
   private readonly webcam: WebcamPanel;
   private readonly touch: TouchController;
   private readonly match = new MatchClient();
@@ -108,6 +110,11 @@ export class Game {
       () => { void this.toggleCamera(); },
     );
     this.duelPanel = new DuelPanel(uiRoot, () => this.match.startMatch(), () => this.match.resetMatch());
+    this.coach = new BodyCoach(
+      uiRoot,
+      () => { void this.toggleCamera(); },
+      () => this.playWithTouch(),
+    );
     this.webcam = new WebcamPanel(uiRoot);
     this.touch = new TouchController(uiRoot);
     this.match.on((message) => { void this.onMatchMessage(message); });
@@ -211,7 +218,9 @@ export class Game {
     this.hud.hide();
     this.ghost.hide();
     this.rival.group.visible = true;
-    this.touch.show();
+    this.touch.hide();
+    this.webcam.setPlayerLayout(true);
+    this.coach.show();
     this.world.course.arm();
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.match.connect("player", room.toUpperCase());
@@ -336,6 +345,9 @@ export class Game {
     const pose = this.pose.update(dt, this.detector.running ? this.detector.latest : null);
     this.webcam.setTracking(this.detector.running && this.pose.visible && !this.pose.resting);
     this.webcam.drawPose(this.detector.latest?.landmarks ?? null);
+    if (this.session === "player") {
+      this.updatePlayerCoach();
+    }
     const keyboard = this.keyboard.update();
     const usingKeys = inputActive(keyboard);
     const touch = this.touch.update();
@@ -346,11 +358,12 @@ export class Game {
       this.demoInput.roll = 0;
     }
     const live = this.session === "player"
-      ? (this.match.phase === "racing" ? preferOverride(touch, keyboard, this.mixedInput, 0.12) : this.demoInput)
+      ? this.playerInput(pose, touch, keyboard)
       : this.playing
         ? (this.detector.running ? preferOverride(pose, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE) : keyboard)
         : this.updateDemoInput();
-    const cruise = this.session === "solo" && this.playing && this.pose.resting && !usingKeys;
+    const usingTouch = inputActive(touch);
+    const cruise = this.playing && this.pose.resting && this.detector.running && !usingKeys && !usingTouch;
 
     this.flight.update(dt, live, (x, z) => this.world.getHeightAt(x, z), cruise);
     this.bird.update(dt, this.flight);
@@ -434,6 +447,62 @@ export class Game {
     });
   }
 
+  private playerInput(pose: FlightInput, touch: FlightInput, keyboard: FlightInput): FlightInput {
+    if (this.match.phase !== "racing") {
+      return this.demoInput;
+    }
+    if (this.detector.running) {
+      preferOverride(pose, touch, this.mixedInput, 0.22);
+      return preferOverride(this.mixedInput, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE);
+    }
+    return preferOverride(touch, keyboard, this.mixedInput, 0.12);
+  }
+
+  private playWithTouch(): void {
+    if (this.detector.running) {
+      void this.toggleCamera();
+    }
+    this.touch.show();
+    this.touch.element.classList.remove("fallback");
+    this.coach.setHint("Palanca: girar y altura. Acelerar a la derecha. Puedes volver a la cámara cuando quieras.");
+  }
+
+  private updatePlayerCoach(): void {
+    const cameraOn = this.detector.running;
+    const racing = this.match.phase === "racing" || this.match.phase === "finished";
+    this.coach.setCameraOn(cameraOn);
+    this.webcam.element.classList.toggle("compact", racing);
+    this.touch.element.classList.toggle("fallback", cameraOn);
+    this.coach.element.classList.toggle("racing", racing);
+    if (cameraOn) {
+      this.touch.show();
+    } else if (racing) {
+      this.touch.show();
+      this.touch.element.classList.remove("fallback");
+    }
+    if (!cameraOn) {
+      if (this.touch.element.classList.contains("hidden")) {
+        this.coach.setHint("Activa la cámara para volar con el cuerpo, o usa la palanca.");
+      }
+      return;
+    }
+    if (this.pose.isCalibrating) {
+      this.coach.setHint("Quédate quieto un segundo: calibrando…");
+      return;
+    }
+    if (!this.pose.visible) {
+      this.coach.setHint("No te veo. Aléjate un poco y abre los brazos.");
+      return;
+    }
+    if (this.pose.resting) {
+      this.coach.setHint("Brazos pegados: planeas. Ábrelos para volver a volar.");
+      return;
+    }
+    this.coach.setHint(this.match.phase === "racing"
+      ? "Te vemos. Manos arriba / abajo e inclínate para girar."
+      : "Listo. El admin inicia la carrera.");
+  }
+
   private async toggleCamera(): Promise<void> {
     if (this.cameraBusy) {
       return;
@@ -448,22 +517,38 @@ export class Game {
         this.pose.onTrackingStopped();
         this.hud.setCameraActive(false);
         this.menu.setCameraActive(false);
+        if (this.session === "player") {
+          this.touch.show();
+          this.touch.element.classList.remove("fallback");
+        }
         return;
       }
 
       this.hud.setCameraActive(false, "Iniciando");
+      if (this.session === "player") {
+        this.coach.setHint("Abriendo cámara… la primera vez puede tardar unos segundos.");
+      }
       const video = await this.webcam.startStream();
       await this.detector.start(video);
       this.pose.resetCalibration();
       this.hud.setCameraActive(true, "Calibrando");
       this.menu.setCameraActive(true);
+      if (this.session === "player") {
+        this.touch.show();
+        this.touch.element.classList.add("fallback");
+      }
     } catch (error) {
       this.detector.stop();
       this.webcam.stopStream();
       const denied = error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
-      this.webcam.showError(denied ? "Sin permiso de cámara. Sigue con teclado." : "No se pudo iniciar la cámara. Sigue con teclado.");
+      const fallback = this.session === "player" ? "Sigue con la palanca." : "Sigue con teclado.";
+      this.webcam.showError(denied ? `Sin permiso de cámara. ${fallback}` : `No se pudo iniciar la cámara. ${fallback}`);
       this.hud.setCameraActive(false, denied ? "Sin permiso" : "Error");
       this.menu.setCameraActive(false);
+      if (this.session === "player") {
+        this.touch.show();
+        this.touch.element.classList.remove("fallback");
+      }
     } finally {
       this.cameraBusy = false;
     }

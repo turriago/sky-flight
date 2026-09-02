@@ -43,20 +43,45 @@ export class WebcamPanel {
 
   async startStream(): Promise<HTMLVideoElement> {
     this.clearError();
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        facingMode: "user",
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-      },
-    });
+    this.stream = await this.openCamera();
+    this.video.setAttribute("playsinline", "true");
+    this.video.setAttribute("webkit-playsinline", "true");
+    this.video.muted = true;
     this.video.srcObject = this.stream;
     await this.video.play();
     this.element.classList.remove("hidden");
     this.setPreviewHidden(false);
     this.setTracking(false);
     return this.video;
+  }
+
+  setPlayerLayout(on: boolean): void {
+    this.element.classList.toggle("player", on);
+  }
+
+  private async openCamera(): Promise<MediaStream> {
+    const attempts: MediaStreamConstraints[] = [
+      {
+        audio: false,
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 480, max: 640 },
+          height: { ideal: 360, max: 480 },
+          frameRate: { ideal: 24, max: 30 },
+        },
+      },
+      { audio: false, video: { facingMode: "user" } },
+      { audio: false, video: true },
+    ];
+    let lastError: unknown = null;
+    for (const constraints of attempts) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("No se pudo abrir la cámara.");
   }
 
   stopStream(): void {

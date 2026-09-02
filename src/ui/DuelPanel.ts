@@ -90,7 +90,7 @@ export class DuelPanel {
       this.status.textContent = view.role === "admin"
         ? `Escanea el QR con el celular (${joined}/2)`
         : joined < 2
-          ? "Esperando al otro jugador…"
+          ? "Apoya el celular, activa la cámara y espera al otro jugador."
           : "Listo. El admin inicia la carrera.";
     } else if (view.phase === "countdown") {
       this.status.textContent = "Preparados";
