@@ -33,6 +33,7 @@ export class DuelPanel {
       <div class="duel-card">
         <div class="duel-kicker">1 vs 1</div>
         <h2 class="duel-title" data-title>Sala</h2>
+        <p class="duel-code hidden" data-code></p>
         <p class="duel-status" data-status>Esperando</p>
         <img class="duel-qr hidden" alt="Código QR para unirse" data-qr />
         <p class="duel-url hidden" data-url></p>
@@ -40,7 +41,7 @@ export class DuelPanel {
         <div class="duel-score hidden" data-score></div>
         <div class="duel-banner hidden" data-banner></div>
         <div class="duel-actions">
-          <button class="ui-button primary hidden" type="button" data-start>Iniciar carrera</button>
+          <button class="ui-button primary hidden" type="button" data-start>Empezar ya</button>
           <button class="ui-button hidden" type="button" data-reset>Otra ronda</button>
         </div>
       </div>
@@ -65,6 +66,9 @@ export class DuelPanel {
     this.element.classList.remove("hidden");
     this.element.classList.toggle("player", view.role === "player");
     this.element.querySelector("[data-title]")!.textContent = `Sala ${view.room}`;
+    const codeLabel = this.element.querySelector("[data-code]")!;
+    codeLabel.textContent = view.room ? `Código ${view.room}` : "";
+    codeLabel.classList.toggle("hidden", view.role !== "admin" || view.phase !== "lobby" || !view.room);
     const urlLabel = this.element.querySelector("[data-url]")!;
     urlLabel.textContent = view.joinUrl;
     urlLabel.classList.toggle("hidden", view.role !== "admin" || view.phase !== "lobby");
@@ -74,9 +78,10 @@ export class DuelPanel {
       this.lastQrUrl = view.joinUrl;
       try {
         this.qrImage.src = await QRCode.toDataURL(view.joinUrl, {
-          width: 280,
-          margin: 1,
-          color: { dark: "#082017", light: "#eef6f8" },
+          width: 420,
+          margin: 4,
+          errorCorrectionLevel: "H",
+          color: { dark: "#000000", light: "#ffffff" },
         });
       } catch {
         this.qrImage.removeAttribute("src");
@@ -88,10 +93,12 @@ export class DuelPanel {
       this.status.textContent = view.error;
     } else if (view.phase === "lobby") {
       this.status.textContent = view.role === "admin"
-        ? `Escanea el QR con el celular (${joined}/2)`
+        ? joined === 2
+          ? "Los dos ya están. La carrera arranca sola…"
+          : `Escanea el QR con cada celular (${joined}/2)`
         : joined < 2
           ? "Apoya el celular, activa la cámara y espera al otro jugador."
-          : "Listo. El admin inicia la carrera.";
+          : "Listo. La carrera arranca sola…";
     } else if (view.phase === "countdown") {
       this.status.textContent = "Preparados";
     } else if (view.phase === "racing") {

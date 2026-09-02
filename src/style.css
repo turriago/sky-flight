@@ -552,6 +552,13 @@ body,
   margin: 6px 0 8px;
 }
 
+.duel-code {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  color: var(--text);
+}
+
 .duel-status,
 .duel-url {
   color: var(--muted);
@@ -561,9 +568,11 @@ body,
 
 .duel-qr {
   display: block;
-  width: min(240px, 70vw);
+  width: min(320px, 78vw);
   height: auto;
   margin: 12px auto;
+  padding: 12px;
+  background: #fff;
   border-radius: 12px;
 }
 
@@ -619,6 +628,7 @@ body,
 
 .duel-panel.compact .duel-qr,
 .duel-panel.compact .duel-url,
+.duel-panel.compact .duel-code,
 .duel-panel.compact .duel-slots,
 .duel-panel.compact .duel-kicker {
   display: none;

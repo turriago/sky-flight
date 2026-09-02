@@ -22,6 +22,7 @@ interface Room {
   phase: Phase;
   times: [number | null, number | null];
   countdown: ReturnType<typeof setInterval> | null;
+  autoStart: ReturnType<typeof setTimeout> | null;
 }
 
 const rooms = new Map<string, Room>();
@@ -142,6 +143,7 @@ function join(ws: WebSocket, role: Role, roomId: string, name: string): Client |
   room.players[slot as 0 | 1] = client;
   send(ws, { t: "welcome", role: "player", slot, room: roomId, phase: room.phase, players: snapshot(room) });
   broadcastLobby(room);
+  queueAutoStart(room);
   return client;
 }
 
@@ -161,6 +163,7 @@ function leave(client: Client): void {
       broadcastLobby(room);
     }
   }
+  clearAutoStart(room);
   if (!room.admin && !room.players[0] && !room.players[1]) {
     stopCountdown(room);
     rooms.delete(room.id);
@@ -174,6 +177,7 @@ function beginMatch(roomId: string): void {
   if (!room || !room.players[0] || !room.players[1] || room.phase === "countdown" || room.phase === "racing") {
     return;
   }
+  clearAutoStart(room);
   room.times = [null, null];
   room.phase = "countdown";
   let n = 3;
@@ -200,6 +204,7 @@ function resetMatch(roomId: string): void {
   room.phase = "lobby";
   room.times = [null, null];
   broadcast(room, { t: "lobby", phase: "lobby", players: snapshot(room) });
+  queueAutoStart(room);
 }
 
 function relayPose(client: Client, msg: Record<string, unknown>): void {
@@ -242,6 +247,7 @@ function createRoom(id: string): Room {
     phase: "lobby",
     times: [null, null],
     countdown: null,
+    autoStart: null,
   };
   rooms.set(id, room);
   return room;
@@ -273,6 +279,21 @@ function stopCountdown(room: Room): void {
   if (room.countdown) {
     clearInterval(room.countdown);
     room.countdown = null;
+  }
+}
+
+function queueAutoStart(room: Room): void {
+  clearAutoStart(room);
+  if (!room.players[0] || !room.players[1] || room.phase !== "lobby") {
+    return;
+  }
+  room.autoStart = setTimeout(() => beginMatch(room.id), 3500);
+}
+
+function clearAutoStart(room: Room): void {
+  if (room.autoStart) {
+    clearTimeout(room.autoStart);
+    room.autoStart = null;
   }
 }
 

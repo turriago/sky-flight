@@ -27,7 +27,7 @@ import { BodyCoach } from "../ui/BodyCoach";
 import { WebcamPanel } from "../ui/WebcamPanel";
 import { PoseDetector } from "../vision/PoseDetector";
 import { MatchClient } from "../net/MatchClient";
-import { duelJoinUrl } from "../net/joinUrl";
+import { duelJoinUrl, duelRoomFromLocation } from "../net/joinUrl";
 import { randomRoomCode, type DuelMessage } from "../net/protocol";
 import { COURSE, POSE } from "../utils/Constants";
 import { World } from "./World";
@@ -124,9 +124,8 @@ export class Game {
     window.addEventListener("resize", this.handleResize);
     window.addEventListener("keydown", this.handleHotkeys);
 
-    const params = new URLSearchParams(location.search);
-    const room = params.get("duel");
-    if (room && params.get("admin") !== "1") {
+    const room = duelRoomFromLocation();
+    if (room) {
       void this.joinAsPlayer(room);
     }
   }

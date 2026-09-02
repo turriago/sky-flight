@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { matchPlugin } from "./server/matchPlugin";
 
 export default defineConfig({
+  appType: "spa",
   plugins: [matchPlugin()],
   server: {
     port: 5173,

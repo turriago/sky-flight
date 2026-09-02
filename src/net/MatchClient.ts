@@ -24,6 +24,10 @@ export class MatchClient {
   private readonly handlers = new Set<Handler>();
   private sendPoseAcc = 0;
   private usingPeer = false;
+  private closed = false;
+  private joinName?: string;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private joinAttempts = 0;
 
   on(handler: Handler): () => void {
     this.handlers.add(handler);
@@ -32,12 +36,15 @@ export class MatchClient {
 
   connect(role: DuelRole, room: string, name?: string): void {
     this.close();
+    this.closed = false;
     this.role = role;
     this.room = room.toUpperCase();
+    this.joinName = name;
     this.error = "";
+    this.joinAttempts = 0;
     this.usingPeer = import.meta.env.PROD;
     if (this.usingPeer) {
-      this.connectPeer(role, name);
+      this.connectPeer(role);
       return;
     }
     this.connectSocket(role, name);
@@ -69,6 +76,11 @@ export class MatchClient {
   }
 
   close(): void {
+    this.closed = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     this.socket?.close();
     this.socket = null;
     this.peerConn?.close();
@@ -104,21 +116,28 @@ export class MatchClient {
     });
   }
 
-  private connectPeer(role: DuelRole, name?: string): void {
+  private connectPeer(role: DuelRole): void {
     const iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:global.stun.twilio.com:3478" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
     ];
     if (role === "admin") {
       const peer = new Peer(peerRoomId(this.room), { config: { iceServers } });
       this.peer = peer;
       this.host = new DuelHost(this.room, (message) => this.handle(message));
       peer.on("open", () => {
+        if (this.closed) {
+          return;
+        }
         this.connected = true;
         this.handle(this.host!.welcomeAdmin());
       });
       peer.on("connection", (conn) => this.bindHostConnection(conn));
       peer.on("error", (err) => {
+        if (this.closed) {
+          return;
+        }
         this.error = err.type === "unavailable-id"
           ? "Esa sala quedó ocupada. Recarga e inicia otra."
           : "No se pudo abrir la sala en internet. Recarga.";
@@ -129,39 +148,86 @@ export class MatchClient {
 
     const peer = new Peer({ config: { iceServers } });
     this.peer = peer;
-    peer.on("open", () => {
-      const conn = peer.connect(peerRoomId(this.room), { reliable: true });
-      this.peerConn = conn;
-      conn.on("open", () => {
-        this.connected = true;
-        this.send({ t: "hello", role: "player", room: this.room, name });
-      });
-      conn.on("data", (data) => this.parseIncoming(data));
-      conn.on("close", () => {
-        this.connected = false;
-        if (!this.error) {
-          this.error = "El admin se desconectó. Escanea el QR otra vez.";
-        }
-        this.emit({ t: "error", message: this.error });
-      });
-      conn.on("error", () => {
-        this.error = "No se pudo unir. El admin debe tener la sala abierta.";
-        this.emit({ t: "error", message: this.error });
-      });
-    });
+    peer.on("open", () => this.tryJoinHost());
     peer.on("error", (err) => {
-      this.error = err.type === "peer-unavailable"
-        ? "No hay admin en esa sala. Abre 1 vs 1 en el PC primero."
-        : "No se pudo unir a la sala. Recarga e intenta de nuevo.";
+      if (this.closed || this.connected) {
+        return;
+      }
+      if (err.type === "peer-unavailable" || err.type === "network" || err.type === "server-error") {
+        this.scheduleJoinRetry();
+        return;
+      }
+      this.error = "No se pudo unir a la sala. Recarga e intenta de nuevo.";
       this.emit({ t: "error", message: this.error });
     });
   }
 
+  private tryJoinHost(): void {
+    if (this.closed || !this.peer || this.connected) {
+      return;
+    }
+    this.joinAttempts += 1;
+    this.peerConn?.close();
+    const conn = this.peer.connect(peerRoomId(this.room), { reliable: true });
+    this.peerConn = conn;
+    const fail = (): void => {
+      if (!this.closed && !this.connected) {
+        this.scheduleJoinRetry();
+      }
+    };
+    conn.on("open", () => {
+      if (this.closed) {
+        return;
+      }
+      if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+      }
+      this.connected = true;
+      this.error = "";
+      this.send({ t: "hello", role: "player", room: this.room, name: this.joinName });
+    });
+    conn.on("data", (data) => this.parseIncoming(data));
+    conn.on("close", () => {
+      this.connected = false;
+      if (this.closed) {
+        return;
+      }
+      if (!this.error) {
+        this.error = "El admin se desconectó. Escanea el QR otra vez.";
+      }
+      this.emit({ t: "error", message: this.error });
+    });
+    conn.on("error", fail);
+    this.retryTimer = setTimeout(fail, 2500);
+  }
+
+  private scheduleJoinRetry(): void {
+    if (this.closed || this.connected) {
+      return;
+    }
+    if (this.joinAttempts >= 16) {
+      this.error = "No hay admin en esa sala. En el PC abre 1 vs 1 · Admin y vuelve a escanear.";
+      this.emit({ t: "error", message: this.error });
+      return;
+    }
+    this.error = `Buscando al admin… (${this.joinAttempts}/16)`;
+    this.emit({ t: "error", message: this.error });
+    this.retryTimer = setTimeout(() => this.tryJoinHost(), 1600);
+  }
+
   private bindHostConnection(conn: DataConnection): void {
     const send: DuelSend = (message) => {
+      const payload = JSON.stringify(message);
       if (conn.open) {
-        conn.send(JSON.stringify(message));
+        conn.send(payload);
+        return;
       }
+      conn.once("open", () => {
+        if (conn.open) {
+          conn.send(payload);
+        }
+      });
     };
     conn.on("data", (data) => {
       const message = decodeMessage(data);

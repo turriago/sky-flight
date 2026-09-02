@@ -12,11 +12,10 @@ Hay tres modos:
 
 En el PC, con `npm run dev` o en la web de Vercel, pulsa **1 vs 1 · Admin**.
 
-1. Escanea el QR con la cámara del celular (Android o iPhone).
-2. El segundo jugador hace lo mismo.
-3. En admin pulsa **Iniciar carrera**.
-4. En el teléfono: **apóyalo** (cámara frontal), pulsa **Activar cámara** y vuela con el cuerpo como en el PC. Si no hay cámara, usa palanca y Acelerar.
-5. El primero que complete los aros gana. El admin ve las dos aves (naranja y cian) en tiempo real.
+1. Escanea el QR grande con cada celular (Android o iPhone). Si no lee, abre a mano `/j/CÓDIGO`.
+2. Cuando Naranja y Cian estén conectados, la carrera **arranca sola**.
+3. En el teléfono: **apóyalo** (cámara frontal), pulsa **Activar cámara** y vuela con el cuerpo. Si no hay cámara, usa palanca y Acelerar.
+4. El primero que complete los aros gana. El admin ve las dos aves (naranja y cian) en tiempo real.
 
 Los tres dispositivos pueden usar la web de Vercel (recomendado: el QR es HTTPS y funciona en iPhone). En local, usa `npm run dev` y la misma Wi‑Fi. El iPhone en 1 vs 1 se juega con el tacto.
 

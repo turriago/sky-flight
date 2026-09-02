@@ -12,6 +12,7 @@ export class DuelHost {
   private readonly seats: [Seat | null, Seat | null] = [null, null];
   private times: [number | null, number | null] = [null, null];
   private timer: ReturnType<typeof setInterval> | null = null;
+  private autoStart: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly room: string,
@@ -56,9 +57,11 @@ export class DuelHost {
       players: this.snapshot(),
     });
     this.broadcastLobby();
+    this.queueAutoStart();
   }
 
   leave(send: DuelSend): void {
+    this.clearAutoStart();
     for (let i = 0; i < 2; i++) {
       if (this.seats[i]?.send === send) {
         this.seats[i] = null;
@@ -72,6 +75,7 @@ export class DuelHost {
   }
 
   start(): void {
+    this.clearAutoStart();
     if (!this.seats[0] || !this.seats[1] || this.phase === "countdown" || this.phase === "racing") {
       return;
     }
@@ -94,9 +98,11 @@ export class DuelHost {
 
   reset(): void {
     this.stop();
+    this.clearAutoStart();
     this.phase = "lobby";
     this.times = [null, null];
     this.broadcast({ t: "lobby", phase: "lobby", players: this.snapshot() });
+    this.queueAutoStart();
   }
 
   incoming(from: DuelSend, message: DuelMessage): void {
@@ -111,6 +117,7 @@ export class DuelHost {
 
   dispose(): void {
     this.stop();
+    this.clearAutoStart();
     this.seats[0] = null;
     this.seats[1] = null;
   }
@@ -131,6 +138,21 @@ export class DuelHost {
       this.times[slot] = pose.time;
       this.phase = "finished";
       this.broadcast({ t: "over", winner: slot, times: this.times });
+    }
+  }
+
+  private queueAutoStart(): void {
+    this.clearAutoStart();
+    if (!this.seats[0] || !this.seats[1] || this.phase !== "lobby") {
+      return;
+    }
+    this.autoStart = setTimeout(() => this.start(), 3500);
+  }
+
+  private clearAutoStart(): void {
+    if (this.autoStart) {
+      clearTimeout(this.autoStart);
+      this.autoStart = null;
     }
   }
 
