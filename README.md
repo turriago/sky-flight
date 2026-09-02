@@ -10,7 +10,7 @@ Hay tres modos:
 
 ### 1 vs 1 por QR
 
-En el PC, con `npm run dev`, abre la **IP de la red** (no `localhost`), por ejemplo `http://192.168.1.20:5173`. Pulsa **1 vs 1 · Admin**.
+En el PC, con `npm run dev` o en la web de Vercel, pulsa **1 vs 1 · Admin**.
 
 1. Escanea el QR con la cámara del celular (Android o iPhone).
 2. El segundo jugador hace lo mismo.
@@ -18,7 +18,7 @@ En el PC, con `npm run dev`, abre la **IP de la red** (no `localhost`), por ejem
 4. En el teléfono: palanca izquierda para girar y subir/bajar; **Acelerar** y **Freno** a la derecha.
 5. El primero que complete los aros gana. El admin ve las dos aves (naranja y cian) en tiempo real.
 
-Los tres dispositivos deben estar en la **misma Wi‑Fi**. Si el QR no abre en el celular, usa la IP `192.168…` de la red (no `localhost`) y permite Node.js en el firewall de Windows. El iPhone no usa la webcam del cuerpo en este modo (Safari pide HTTPS); se juega con el tacto.
+Los tres dispositivos pueden usar la web de Vercel (recomendado: el QR es HTTPS y funciona en iPhone). En local, usa `npm run dev` y la misma Wi‑Fi. El iPhone en 1 vs 1 se juega con el tacto.
 
 Se vuela con teclado, con el cuerpo (webcam + MediaPipe Pose) en PC, o con ambos. El teclado tiene prioridad si hay teclas pulsadas.
 
@@ -154,7 +154,7 @@ En [vercel.com/turriago1](https://vercel.com/turriago1): **Add New → Project**
 - Build command: `npm run build`
 - Output: `dist`
 
-La web pública sirve **Circuito**, **vuelo libre** y cámara (HTTPS). El **1 vs 1 por QR** no corre en Vercel: usa un WebSocket de `npm run dev` en la misma Wi‑Fi.
+La web pública sirve **Circuito**, **vuelo libre**, cámara (HTTPS) y **1 vs 1**. En Vercel abre **1 vs 1 · Admin** en el PC, escanea el QR con los celulares y mira la carrera en vivo. El PC admin debe dejar esa pestaña abierta.
 
 Si GitHub no lista el repo, **Adjust GitHub App Permissions** y da acceso a `sky-flight`.
 

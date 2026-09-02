@@ -16,10 +16,10 @@ export class MainMenu {
       <div class="menu-card">
         <div class="menu-kicker">Prototipo</div>
         <h1 class="menu-title">SKY FLIGHT</h1>
-        <p class="menu-tagline">${import.meta.env.DEV ? "Circuito, 1 vs 1 y medallas" : "Circuito y vuelo libre"}</p>
+        <p class="menu-tagline">Circuito, 1 vs 1 y medallas</p>
         <div class="menu-actions">
-          ${import.meta.env.DEV ? `<button class="ui-button primary" type="button" data-duel>1 vs 1 · Admin</button>` : ""}
-          <button class="ui-button primary" type="button" data-race>Circuito</button>
+          <button class="ui-button primary" type="button" data-duel>1 vs 1 · Admin</button>
+          <button class="ui-button" type="button" data-race>Circuito</button>
           <button class="ui-button" type="button" data-free>Vuelo libre</button>
           <button class="ui-button" type="button" data-controls>Controles</button>
           <button class="ui-button" type="button" data-camera>Activar cámara</button>

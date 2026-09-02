@@ -119,7 +119,7 @@ export class Game {
 
     const params = new URLSearchParams(location.search);
     const room = params.get("duel");
-    if (import.meta.env.DEV && room && params.get("admin") !== "1") {
+    if (room && params.get("admin") !== "1") {
       void this.joinAsPlayer(room);
     }
   }
