@@ -17,6 +17,7 @@ export default defineConfig({
     sourcemap: true,
   },
   optimizeDeps: {
+    include: ["mqtt"],
     exclude: ["@mediapipe/tasks-vision"],
   },
 });

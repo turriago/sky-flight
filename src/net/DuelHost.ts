@@ -39,6 +39,9 @@ export class DuelHost {
   }
 
   join(send: DuelSend, name: string): void {
+    if (this.seats[0]?.send === send || this.seats[1]?.send === send) {
+      return;
+    }
     const slot: 0 | 1 | null = !this.seats[0] ? 0 : !this.seats[1] ? 1 : null;
     if (slot === null) {
       send({ t: "error", message: "La sala ya tiene dos jugadores." });
@@ -175,6 +178,3 @@ export class DuelHost {
   }
 }
 
-export function peerRoomId(room: string): string {
-  return `skyflight${room.toUpperCase()}`;
-}

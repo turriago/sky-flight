@@ -1,8 +1,14 @@
-import { Peer, type DataConnection } from "peerjs";
-import { DuelHost, peerRoomId, type DuelSend } from "./DuelHost";
+import type { MqttClient } from "mqtt";
+import mqtt from "mqtt";
+import { DuelHost, type DuelSend } from "./DuelHost";
 import type { DuelMessage, DuelPhase, DuelPlayerInfo, DuelPose, DuelRole } from "./protocol";
 
 type Handler = (message: DuelMessage) => void;
+
+const BROKERS = [
+  "wss://broker.emqx.io:8084/mqtt",
+  "wss://broker.hivemq.com:8884/mqtt",
+];
 
 export class MatchClient {
   phase: DuelPhase = "lobby";
@@ -18,16 +24,17 @@ export class MatchClient {
   connected = false;
 
   private socket: WebSocket | null = null;
-  private peer: Peer | null = null;
-  private peerConn: DataConnection | null = null;
+  private mqtt: MqttClient | null = null;
   private host: DuelHost | null = null;
   private readonly handlers = new Set<Handler>();
+  private readonly senders = new Map<string, DuelSend>();
   private sendPoseAcc = 0;
-  private usingPeer = false;
+  private usingMqtt = false;
   private closed = false;
   private joinName?: string;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private joinAttempts = 0;
+  private clientId = "";
+  private helloTimer: ReturnType<typeof setInterval> | null = null;
+  private brokerIndex = 0;
 
   on(handler: Handler): () => void {
     this.handlers.add(handler);
@@ -41,10 +48,12 @@ export class MatchClient {
     this.room = room.toUpperCase();
     this.joinName = name;
     this.error = "";
-    this.joinAttempts = 0;
-    this.usingPeer = import.meta.env.PROD;
-    if (this.usingPeer) {
-      this.connectPeer(role);
+    this.brokerIndex = 0;
+    this.usingMqtt = import.meta.env.PROD;
+    if (this.usingMqtt) {
+      this.error = "Abriendo la sala…";
+      this.emit({ t: "error", message: this.error });
+      this.connectMqtt();
       return;
     }
     this.connectSocket(role, name);
@@ -68,7 +77,7 @@ export class MatchClient {
 
   sendPose(dt: number, pose: Omit<DuelPose, "t">): void {
     this.sendPoseAcc += dt;
-    if (this.sendPoseAcc < 0.05) {
+    if (this.sendPoseAcc < 0.08) {
       return;
     }
     this.sendPoseAcc = 0;
@@ -77,20 +86,16 @@ export class MatchClient {
 
   close(): void {
     this.closed = true;
-    if (this.retryTimer) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
+    this.stopHello();
     this.socket?.close();
     this.socket = null;
-    this.peerConn?.close();
-    this.peerConn = null;
     this.host?.dispose();
     this.host = null;
-    this.peer?.destroy();
-    this.peer = null;
+    this.senders.clear();
+    this.mqtt?.end(true);
+    this.mqtt = null;
     this.connected = false;
-    this.usingPeer = false;
+    this.usingMqtt = false;
   }
 
   private connectSocket(role: DuelRole, name?: string): void {
@@ -116,127 +121,136 @@ export class MatchClient {
     });
   }
 
-  private connectPeer(role: DuelRole): void {
-    const iceServers = [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:stun.cloudflare.com:3478" },
-    ];
-    if (role === "admin") {
-      const peer = new Peer(peerRoomId(this.room), { config: { iceServers } });
-      this.peer = peer;
-      this.host = new DuelHost(this.room, (message) => this.handle(message));
-      peer.on("open", () => {
-        if (this.closed) {
-          return;
-        }
-        this.connected = true;
-        this.handle(this.host!.welcomeAdmin());
-      });
-      peer.on("connection", (conn) => this.bindHostConnection(conn));
-      peer.on("error", (err) => {
-        if (this.closed) {
-          return;
-        }
-        this.error = err.type === "unavailable-id"
-          ? "Esa sala quedó ocupada. Recarga e inicia otra."
-          : "No se pudo abrir la sala en internet. Recarga.";
-        this.emit({ t: "error", message: this.error });
-      });
+  private connectMqtt(): void {
+    if (this.closed) {
       return;
     }
-
-    const peer = new Peer({ config: { iceServers } });
-    this.peer = peer;
-    peer.on("open", () => this.tryJoinHost());
-    peer.on("error", (err) => {
-      if (this.closed || this.connected) {
-        return;
-      }
-      if (err.type === "peer-unavailable" || err.type === "network" || err.type === "server-error") {
-        this.scheduleJoinRetry();
-        return;
-      }
-      this.error = "No se pudo unir a la sala. Recarga e intenta de nuevo.";
-      this.emit({ t: "error", message: this.error });
+    const url = BROKERS[this.brokerIndex] ?? BROKERS[0];
+    this.clientId = mqttId(this.role === "admin" ? "a" : "p", this.room);
+    const client = mqtt.connect(url, {
+      clientId: this.clientId,
+      clean: true,
+      keepalive: 30,
+      reconnectPeriod: 2000,
+      connectTimeout: 10000,
+      protocolVersion: 4,
     });
-  }
+    this.mqtt = client;
 
-  private tryJoinHost(): void {
-    if (this.closed || !this.peer || this.connected) {
-      return;
-    }
-    this.joinAttempts += 1;
-    this.peerConn?.close();
-    const conn = this.peer.connect(peerRoomId(this.room), { reliable: true });
-    this.peerConn = conn;
-    const fail = (): void => {
-      if (!this.closed && !this.connected) {
-        this.scheduleJoinRetry();
-      }
-    };
-    conn.on("open", () => {
+    client.on("connect", () => {
       if (this.closed) {
         return;
-      }
-      if (this.retryTimer) {
-        clearTimeout(this.retryTimer);
-        this.retryTimer = null;
       }
       this.connected = true;
       this.error = "";
-      this.send({ t: "hello", role: "player", room: this.room, name: this.joinName });
+      if (this.role === "admin") {
+        this.host ??= new DuelHost(this.room, (message) => this.handle(message));
+        client.subscribe(this.topicUp(), { qos: 0 }, () => {
+          if (this.host) {
+            this.handle(this.host.welcomeAdmin());
+          }
+        });
+        return;
+      }
+      client.subscribe([this.topicDown(), this.topicPlayer(this.clientId)], { qos: 0 }, () => {
+        this.sendHello();
+        this.startHello();
+      });
     });
-    conn.on("data", (data) => this.parseIncoming(data));
-    conn.on("close", () => {
-      this.connected = false;
+
+    client.on("message", (topic, payload) => {
       if (this.closed) {
         return;
       }
-      if (!this.error) {
-        this.error = "El admin se desconectó. Escanea el QR otra vez.";
+      const text = payload.toString();
+      if (this.role === "admin" && topic === this.topicUp()) {
+        this.onAdminUp(text);
+        return;
       }
-      this.emit({ t: "error", message: this.error });
+      if (this.role === "player") {
+        this.parseIncoming(text);
+      }
     });
-    conn.on("error", fail);
-    this.retryTimer = setTimeout(fail, 2500);
+
+    client.on("error", () => {
+      if (this.closed || this.connected) {
+        return;
+      }
+      this.tryNextBroker();
+    });
+
+    client.on("close", () => {
+      if (this.closed) {
+        return;
+      }
+      this.connected = false;
+    });
+
+    window.setTimeout(() => {
+      if (!this.closed && !this.connected) {
+        this.tryNextBroker();
+      }
+    }, 9000);
   }
 
-  private scheduleJoinRetry(): void {
+  private tryNextBroker(): void {
     if (this.closed || this.connected) {
       return;
     }
-    if (this.joinAttempts >= 16) {
-      this.error = "No hay admin en esa sala. En el PC abre 1 vs 1 · Admin y vuelve a escanear.";
+    this.mqtt?.end(true);
+    this.mqtt = null;
+    this.brokerIndex += 1;
+    if (this.brokerIndex >= BROKERS.length) {
+      this.error = "No se pudo abrir la sala. Recarga en 10 segundos.";
       this.emit({ t: "error", message: this.error });
       return;
     }
-    this.error = `Buscando al admin… (${this.joinAttempts}/16)`;
+    this.error = "Reintentando sala…";
     this.emit({ t: "error", message: this.error });
-    this.retryTimer = setTimeout(() => this.tryJoinHost(), 1600);
+    this.connectMqtt();
   }
 
-  private bindHostConnection(conn: DataConnection): void {
+  private onAdminUp(text: string): void {
+    const packet = decodePacket(text);
+    if (!packet || !this.host) {
+      return;
+    }
+    const send = this.senderFor(packet.from);
+    this.host.incoming(send, packet.body);
+  }
+
+  private senderFor(from: string): DuelSend {
+    const existing = this.senders.get(from);
+    if (existing) {
+      return existing;
+    }
     const send: DuelSend = (message) => {
-      const payload = JSON.stringify(message);
-      if (conn.open) {
-        conn.send(payload);
+      this.mqtt?.publish(this.topicPlayer(from), JSON.stringify(message), { qos: 0 });
+    };
+    this.senders.set(from, send);
+    return send;
+  }
+
+  private sendHello(): void {
+    this.publishUp({ t: "hello", role: "player", room: this.room, name: this.joinName });
+  }
+
+  private startHello(): void {
+    this.stopHello();
+    this.helloTimer = setInterval(() => {
+      if (this.slot !== null || this.closed) {
+        this.stopHello();
         return;
       }
-      conn.once("open", () => {
-        if (conn.open) {
-          conn.send(payload);
-        }
-      });
-    };
-    conn.on("data", (data) => {
-      const message = decodeMessage(data);
-      if (message && this.host) {
-        this.host.incoming(send, message);
-      }
-    });
-    conn.on("close", () => this.host?.leave(send));
-    conn.on("error", () => this.host?.leave(send));
+      this.sendHello();
+    }, 2000);
+  }
+
+  private stopHello(): void {
+    if (this.helloTimer) {
+      clearInterval(this.helloTimer);
+      this.helloTimer = null;
+    }
   }
 
   private handle(message: DuelMessage): void {
@@ -247,6 +261,9 @@ export class MatchClient {
       this.phase = message.phase;
       this.players = message.players;
       this.error = "";
+      if (message.role === "player") {
+        this.stopHello();
+      }
     } else if (message.t === "lobby") {
       this.phase = message.phase;
       this.players = message.players;
@@ -279,9 +296,14 @@ export class MatchClient {
       this.socket.send(JSON.stringify(message));
       return;
     }
-    if (this.peerConn?.open) {
-      this.peerConn.send(JSON.stringify(message));
+    if (this.usingMqtt && this.role === "player") {
+      this.publishUp(message);
     }
+  }
+
+  private publishUp(message: DuelMessage): void {
+    const packet = JSON.stringify({ from: this.clientId, body: message });
+    this.mqtt?.publish(this.topicUp(), packet, { qos: 0 });
   }
 
   private parseIncoming(raw: unknown): void {
@@ -290,15 +312,42 @@ export class MatchClient {
       this.handle(message);
     }
   }
+
+  private topicUp(): string {
+    return `skyflight/${this.room}/up`;
+  }
+
+  private topicDown(): string {
+    return `skyflight/${this.room}/down`;
+  }
+
+  private topicPlayer(id: string): string {
+    return `skyflight/${this.room}/p/${id}`;
+  }
+}
+
+function mqttId(role: string, room: string): string {
+  return `sf${room}${role}${Math.random().toString(36).slice(2, 8)}`.slice(0, 23);
+}
+
+function decodePacket(raw: string): { from: string; body: DuelMessage } | null {
+  try {
+    const parsed = JSON.parse(raw) as { from?: string; body?: DuelMessage };
+    if (typeof parsed.from === "string" && parsed.body && typeof parsed.body.t === "string") {
+      return { from: parsed.from, body: parsed.body };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function decodeMessage(raw: unknown): DuelMessage | null {
   try {
-    if (typeof raw === "string") {
-      return JSON.parse(raw) as DuelMessage;
-    }
-    if (raw && typeof raw === "object" && "t" in raw) {
-      return raw as DuelMessage;
+    const text = typeof raw === "string" ? raw : raw instanceof Uint8Array ? new TextDecoder().decode(raw) : "";
+    const parsed = text ? JSON.parse(text) : raw;
+    if (parsed && typeof parsed === "object" && "t" in parsed) {
+      return parsed as DuelMessage;
     }
   } catch {
     return null;
