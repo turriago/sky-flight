@@ -93,11 +93,13 @@ export class DuelPanel {
       this.status.textContent = view.error;
     } else if (view.phase === "lobby") {
       this.status.textContent = view.role === "admin"
-        ? joined === 2
-          ? "Los dos ya están. La carrera arranca sola…"
-          : `Escanea el QR con cada celular (${joined}/2)`
+        ? joined === 0
+          ? "Escanea el QR con un celular. Sirve con uno solo para probar."
+          : joined === 1
+            ? "Hay un jugador. La prueba arranca sola; el segundo puede unirse después."
+            : "Los dos ya están. La carrera arranca sola…"
         : joined < 2
-          ? "Inclina el celular para volar y espera al otro jugador."
+          ? "Pulsa Volar con el celular. Con uno basta para probar."
           : "Listo. La carrera arranca sola…";
     } else if (view.phase === "countdown") {
       this.status.textContent = "Preparados";
@@ -126,7 +128,7 @@ export class DuelPanel {
     this.banner.classList.toggle("hidden", view.phase !== "countdown");
     this.banner.textContent = view.countdown > 0 ? String(view.countdown) : "YA";
 
-    const canStart = view.role === "admin" && view.phase === "lobby" && joined === 2;
+    const canStart = view.role === "admin" && view.phase === "lobby" && joined >= 1;
     this.startButton.classList.toggle("hidden", !canStart);
     this.resetButton.classList.toggle("hidden", !(view.role === "admin" && view.phase === "finished"));
     this.element.classList.toggle("compact", view.phase === "racing");

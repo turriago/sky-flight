@@ -174,7 +174,7 @@ function leave(client: Client): void {
 
 function beginMatch(roomId: string): void {
   const room = rooms.get(roomId);
-  if (!room || !room.players[0] || !room.players[1] || room.phase === "countdown" || room.phase === "racing") {
+  if (!room || (!room.players[0] && !room.players[1]) || room.phase === "countdown" || room.phase === "racing") {
     return;
   }
   clearAutoStart(room);
@@ -284,10 +284,11 @@ function stopCountdown(room: Room): void {
 
 function queueAutoStart(room: Room): void {
   clearAutoStart(room);
-  if (!room.players[0] || !room.players[1] || room.phase !== "lobby") {
+  const joined = (room.players[0] ? 1 : 0) + (room.players[1] ? 1 : 0);
+  if (joined < 1 || room.phase !== "lobby") {
     return;
   }
-  room.autoStart = setTimeout(() => beginMatch(room.id), 3500);
+  room.autoStart = setTimeout(() => beginMatch(room.id), joined >= 2 ? 3500 : 6000);
 }
 
 function clearAutoStart(room: Room): void {

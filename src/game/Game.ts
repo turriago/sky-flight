@@ -510,7 +510,7 @@ export class Game {
       this.touch.element.classList.add("fallback", "tilt-mode");
       this.coach.setHint(racing
         ? (this.tilt.hasSignal ? "Inclina el celular para volar." : "No llega el sensor. Recalibra o usa palanca.")
-        : "Listo. La carrera arranca sola. Inclina el celular cuando empiece.");
+        : "Listo. Con un celular basta. Inclina cuando empiece.";
       return;
     }
     if (this.playerSteer === "touch") {

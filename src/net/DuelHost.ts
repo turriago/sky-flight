@@ -79,7 +79,7 @@ export class DuelHost {
 
   start(): void {
     this.clearAutoStart();
-    if (!this.seats[0] || !this.seats[1] || this.phase === "countdown" || this.phase === "racing") {
+    if (this.playerCount() < 1 || this.phase === "countdown" || this.phase === "racing") {
       return;
     }
     this.times = [null, null];
@@ -146,10 +146,14 @@ export class DuelHost {
 
   private queueAutoStart(): void {
     this.clearAutoStart();
-    if (!this.seats[0] || !this.seats[1] || this.phase !== "lobby") {
+    if (this.playerCount() < 1 || this.phase !== "lobby") {
       return;
     }
-    this.autoStart = setTimeout(() => this.start(), 3500);
+    this.autoStart = setTimeout(() => this.start(), this.playerCount() >= 2 ? 3500 : 6000);
+  }
+
+  private playerCount(): number {
+    return (this.seats[0] ? 1 : 0) + (this.seats[1] ? 1 : 0);
   }
 
   private clearAutoStart(): void {
