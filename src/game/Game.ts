@@ -16,6 +16,7 @@ import { KeyboardController } from "../input/KeyboardController";
 import type { InputController } from "../input/InputController";
 import { preferOverride, createFlightInput, type FlightInput } from "../input/FlightInput";
 import { TouchController } from "../input/TouchController";
+import { TiltController } from "../input/TiltController";
 import { PoseController } from "../input/PoseController";
 import { Bird } from "../player/Bird";
 import { Ghost } from "../player/Ghost";
@@ -54,6 +55,7 @@ export class Game {
   private readonly coach: BodyCoach;
   private readonly webcam: WebcamPanel;
   private readonly touch: TouchController;
+  private readonly tilt = new TiltController();
   private readonly match = new MatchClient();
   private readonly demoInput: FlightInput = createFlightInput();
   private readonly mixedInput: FlightInput = createFlightInput();
@@ -67,6 +69,7 @@ export class Game {
   private hitCooldown = 0;
   private joinUrl = "";
   private lastMatchPhase = "";
+  private playerSteer: "none" | "tilt" | "touch" = "none";
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.scene.background = new Color(0xa9c6d2);
@@ -112,7 +115,7 @@ export class Game {
     this.duelPanel = new DuelPanel(uiRoot, () => this.match.startMatch(), () => this.match.resetMatch());
     this.coach = new BodyCoach(
       uiRoot,
-      () => { void this.toggleCamera(); },
+      () => { void this.enableTilt(); },
       () => this.playWithTouch(),
     );
     this.webcam = new WebcamPanel(uiRoot);
@@ -148,6 +151,7 @@ export class Game {
     this.webcam.stopStream();
     this.audio.dispose();
     this.touch.dispose();
+    this.tilt.dispose();
     this.match.close();
     this.assets.clear();
     window.removeEventListener("resize", this.handleResize);
@@ -218,7 +222,9 @@ export class Game {
     this.ghost.hide();
     this.rival.group.visible = true;
     this.touch.hide();
-    this.webcam.setPlayerLayout(true);
+    this.webcam.setPlayerLayout(false);
+    this.playerSteer = "none";
+    this.tilt.tryListen();
     this.coach.show();
     this.world.course.arm();
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -450,6 +456,10 @@ export class Game {
     if (this.match.phase !== "racing") {
       return this.demoInput;
     }
+    if (this.playerSteer === "tilt" || (this.playerSteer !== "touch" && this.tilt.enabled)) {
+      preferOverride(this.tilt.update(), touch, this.mixedInput, 0.38);
+      return preferOverride(this.mixedInput, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE);
+    }
     if (this.detector.running) {
       preferOverride(pose, touch, this.mixedInput, 0.22);
       return preferOverride(this.mixedInput, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE);
@@ -457,49 +467,64 @@ export class Game {
     return preferOverride(touch, keyboard, this.mixedInput, 0.12);
   }
 
-  private playWithTouch(): void {
-    if (this.detector.running) {
-      void this.toggleCamera();
+  private async enableTilt(): Promise<void> {
+    if (this.tilt.enabled) {
+      this.tilt.calibrate();
+      this.coach.setHint("Calibrado. Celular derecho es el centro. Inclina para volar.");
+      return;
     }
+    this.coach.setHint("Activando el sensor de movimiento…");
+    const ok = await this.tilt.enable();
+    if (!ok) {
+      this.coach.setHint("El iPhone pidió permiso y no se concedió. Usa palanca, o pulsa de nuevo y acepta.");
+      return;
+    }
+    this.playerSteer = "tilt";
     this.touch.show();
-    this.touch.element.classList.remove("fallback");
-    this.coach.setHint("Palanca: girar y altura. Acelerar a la derecha. Puedes volver a la cámara cuando quieras.");
+    this.touch.element.classList.add("fallback", "tilt-mode");
+    this.coach.setArmed(true);
+    this.coach.setHint("Listo. Inclina el celular. Recalibrar si el ave se desvía sola.");
+    try {
+      await this.audio.start();
+    } catch {
+      // iOS desbloquea audio con este toque
+    }
+  }
+
+  private playWithTouch(): void {
+    this.playerSteer = "touch";
+    this.tilt.enabled = false;
+    this.touch.show();
+    this.touch.element.classList.remove("fallback", "tilt-mode");
+    this.coach.setArmed(false);
+    this.coach.setHint("Palanca para girar y altura. Acelerar a la derecha.");
   }
 
   private updatePlayerCoach(): void {
-    const cameraOn = this.detector.running;
     const racing = this.match.phase === "racing" || this.match.phase === "finished";
-    this.coach.setCameraOn(cameraOn);
-    this.webcam.element.classList.toggle("compact", racing);
-    this.touch.element.classList.toggle("fallback", cameraOn);
+    const tiltOn = this.playerSteer === "tilt" && this.tilt.enabled;
+    this.coach.setArmed(tiltOn);
     this.coach.element.classList.toggle("racing", racing);
-    if (cameraOn) {
+    if (tiltOn) {
       this.touch.show();
-    } else if (racing) {
+      this.touch.element.classList.add("fallback", "tilt-mode");
+      this.coach.setHint(racing
+        ? (this.tilt.hasSignal ? "Inclina el celular para volar." : "No llega el sensor. Recalibra o usa palanca.")
+        : "Listo. La carrera arranca sola. Inclina el celular cuando empiece.");
+      return;
+    }
+    if (this.playerSteer === "touch") {
       this.touch.show();
-      this.touch.element.classList.remove("fallback");
-    }
-    if (!cameraOn) {
-      if (this.touch.element.classList.contains("hidden")) {
-        this.coach.setHint("Activa la cámara para volar con el cuerpo, o usa la palanca.");
-      }
+      this.touch.element.classList.remove("fallback", "tilt-mode");
       return;
     }
-    if (this.pose.isCalibrating) {
-      this.coach.setHint("Quédate quieto un segundo: calibrando…");
+    if (racing) {
+      this.touch.show();
+      this.touch.element.classList.remove("fallback", "tilt-mode");
+      this.coach.setHint("Usa la palanca, o pulsa Volar con el celular.");
       return;
     }
-    if (!this.pose.visible) {
-      this.coach.setHint("No te veo. Aléjate un poco y abre los brazos.");
-      return;
-    }
-    if (this.pose.resting) {
-      this.coach.setHint("Brazos pegados: planeas. Ábrelos para volver a volar.");
-      return;
-    }
-    this.coach.setHint(this.match.phase === "racing"
-      ? "Te vemos. Manos arriba / abajo e inclínate para girar."
-      : "Listo. El admin inicia la carrera.");
+    this.coach.setHint("Pulsa Volar con el celular e inclínalo. Palanca solo si lo prefieres.");
   }
 
   private async toggleCamera(): Promise<void> {

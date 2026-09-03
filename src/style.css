@@ -460,6 +460,14 @@ body,
   display: none;
 }
 
+.touch-pad.tilt-mode {
+  justify-content: flex-end;
+}
+
+.touch-pad.tilt-mode .touch-stick {
+  display: none;
+}
+
 .touch-pad.fallback {
   opacity: 0.38;
 }

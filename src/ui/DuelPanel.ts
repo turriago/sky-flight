@@ -97,7 +97,7 @@ export class DuelPanel {
           ? "Los dos ya están. La carrera arranca sola…"
           : `Escanea el QR con cada celular (${joined}/2)`
         : joined < 2
-          ? "Apoya el celular, activa la cámara y espera al otro jugador."
+          ? "Inclina el celular para volar y espera al otro jugador."
           : "Listo. La carrera arranca sola…";
     } else if (view.phase === "countdown") {
       this.status.textContent = "Preparados";
