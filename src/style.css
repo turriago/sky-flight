@@ -263,6 +263,17 @@ body,
   border-color: rgba(126, 208, 192, 0.45);
 }
 
+.ui-button.primary {
+  background: rgba(126, 208, 192, 0.18);
+  border-color: rgba(126, 208, 192, 0.45);
+}
+
+.ui-button.chrome-open {
+  background: #1a73e8;
+  border-color: #8ab4f8;
+  color: #fff;
+}
+
 .ui-button:disabled {
   opacity: 0.55;
   cursor: default;
@@ -440,36 +451,240 @@ body,
 }
 
 .body-coach.camera-on .body-coach-lead,
-.body-coach.camera-on .body-coach-gestures {
+.body-coach.camera-on .body-coach-gestures,
+.body-coach.camera-on h2,
+.body-coach.camera-on .body-coach-kicker,
+.body-coach.camera-on .body-coach-steps {
   display: none;
 }
 
-.body-coach.racing {
+.body-coach.racing,
+.body-coach.compact {
   bottom: auto;
-  top: 72px;
-  width: min(360px, calc(100vw - 16px));
+  top: 4px;
+  width: auto;
+  max-width: min(280px, calc(100vw - 120px));
 }
 
-.body-coach.racing .body-coach-card {
-  padding: 8px 12px;
+.body-coach.racing .body-coach-card,
+.body-coach.compact .body-coach-card {
+  padding: 3px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+  border-radius: 999px;
 }
 
 .body-coach.racing h2,
+.body-coach.racing .body-coach-kicker,
+.body-coach.compact h2,
+.body-coach.compact .body-coach-kicker,
+.body-coach.compact .body-coach-lead,
+.body-coach.compact .body-coach-steps,
+.body-coach.compact .body-coach-gestures,
+.body-coach.compact .body-coach-status,
+.body-coach.racing .body-coach-status,
+.body-coach.racing .body-coach-lead,
+.body-coach.racing .body-coach-steps,
+.body-coach.racing .body-coach-gestures {
+  display: none;
+}
+
 .body-coach.racing .body-coach-actions,
-.body-coach.racing .body-coach-kicker {
+.body-coach.compact .body-coach-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin: 0;
+  justify-content: center;
+}
+
+.body-coach.needs-browser .chrome-open:not(.hidden) {
+  display: inline-flex;
+}
+
+.browser-warn {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(243, 194, 122, 0.16);
+  border: 1px solid rgba(243, 194, 122, 0.45);
+  text-align: left;
+}
+
+.browser-warn p {
+  color: var(--accent-2);
+  font-size: 13px;
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+
+.browser-warn .chrome-open {
+  width: 100%;
+}
+
+.body-coach.compact.needs-browser,
+.body-coach.racing.needs-browser {
+  max-width: min(420px, calc(100vw - 16px));
+}
+
+.body-coach.compact.needs-browser .body-coach-card,
+.body-coach.racing.needs-browser .body-coach-card {
+  flex-wrap: wrap;
+  justify-content: center;
+  border-radius: 16px;
+  padding: 6px 8px;
+}
+
+.body-coach.compact .browser-warn:not(.hidden),
+.body-coach.racing .browser-warn:not(.hidden) {
+  flex: 1 1 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+}
+
+.body-coach.compact .browser-warn p,
+.body-coach.racing .browser-warn p {
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.body-coach.compact .chrome-open,
+.body-coach.racing .chrome-open {
+  padding: 6px 8px;
+  font-size: 10px;
+}
+
+.body-coach.racing .ui-button,
+.body-coach.compact .ui-button {
+  padding: 5px 9px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  min-height: 0;
+}
+
+.flight-guide {
+  position: absolute;
+  left: 12px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  top: auto;
+  transform: none;
+  z-index: 6;
+  pointer-events: none;
+  width: 80px;
+}
+
+.guide-pad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 80px;
+}
+
+.guide-mid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.guide-cell {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: rgba(8, 18, 26, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0;
+  line-height: 1;
+}
+
+.guide-cell.on {
+  color: #07141d;
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+.player-session.portrait .flight-guide {
   display: none;
 }
 
-.touch-pad.tilt-mode {
-  justify-content: flex-end;
+.rotate-hint {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: rgba(7, 20, 29, 0.96);
+  color: var(--text);
+  text-align: center;
+  padding: 24px 28px;
+  pointer-events: auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
 }
 
-.touch-pad.tilt-mode .touch-stick {
-  display: none;
+.rotate-phone {
+  width: 42px;
+  height: 72px;
+  border: 3px solid var(--accent-2);
+  border-radius: 10px;
+  position: relative;
+  animation: rotate-phone 1.6s ease-in-out infinite;
+}
+
+.rotate-phone::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  transform: translateX(-50%);
+}
+
+.rotate-title {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.rotate-lead {
+  max-width: 22rem;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+@keyframes rotate-phone {
+  0%, 30% { transform: rotate(0deg); }
+  60%, 100% { transform: rotate(90deg); }
+}
+
+.player-session.portrait .rotate-hint {
+  display: flex;
+}
+
+.player-session.portrait .body-coach,
+.player-session.portrait .touch-pad,
+.player-session.portrait .duel-panel {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .touch-pad.fallback {
-  opacity: 0.38;
+  opacity: 0.72;
 }
 
 .touch-pad.fallback .touch-stick,
@@ -532,10 +747,6 @@ body,
   z-index: 4;
   pointer-events: none;
   width: min(420px, calc(100vw - 24px));
-}
-
-.duel-panel.player {
-  top: 10px;
 }
 
 .duel-card {
@@ -638,28 +849,172 @@ body,
 .duel-panel.compact .duel-url,
 .duel-panel.compact .duel-code,
 .duel-panel.compact .duel-slots,
-.duel-panel.compact .duel-kicker {
+.duel-panel.compact .duel-kicker,
+.duel-panel.compact .duel-actions {
   display: none;
 }
 
 .duel-panel.compact .duel-card {
-  padding: 10px 14px;
+  padding: 6px 10px;
 }
 
 .duel-panel.compact .duel-title {
-  font-size: 18px;
+  font-size: 16px;
   margin: 0;
+}
+
+.duel-panel.player {
+  top: 4px;
+  width: min(200px, calc(100vw - 200px));
+}
+
+.duel-panel.player.compact {
+  top: 4px;
+  left: auto;
+  right: 8px;
+  transform: none;
+  width: auto;
+}
+
+.duel-panel.player.compact .duel-title,
+.duel-panel.player.compact .duel-status {
+  display: none;
+}
+
+.duel-panel.player.compact .duel-card {
+  padding: 3px 8px;
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.duel-panel.player.compact .duel-score {
+  margin-top: 0;
+  font-size: 10px;
+  gap: 12px;
+}
+
+.duel-modes {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin: 8px 0 4px;
+}
+
+.duel-modes.hidden {
+  display: none;
+}
+
+.duel-modes .ui-button {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.hunt-hud {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.hunt-role {
+  font-weight: 700;
+}
+
+.hunt-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: center;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.heat-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 108px;
+}
+
+.heat-label {
+  font-weight: 700;
+  color: var(--accent-2);
+}
+
+.heat-track {
+  display: inline-block;
+  width: 72px;
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.heat-track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #7ec8ff, #f3d08a, #ef7a6a);
+}
+
+.heat-wrap.warm .heat-label {
+  color: #f3d08a;
+}
+
+.heat-wrap.locked .heat-label {
+  color: #ef7a6a;
+}
+
+.heat-wrap.locked .heat-track i {
+  background: #ef7a6a;
+}
+
+.duel-panel.compact.hunt .duel-title,
+.duel-panel.compact.hunt .duel-status {
+  display: none;
+}
+
+.duel-panel.player.compact .hunt-hud,
+.duel-panel.compact .hunt-hud:not(.hidden) {
+  margin-top: 0;
+  font-size: 10px;
+}
+
+.touch-btn.fire {
+  min-height: 34px;
+  background: linear-gradient(180deg, #f0a090, #d46a5c);
+  color: #2a0c08;
+  font-weight: 700;
+}
+
+.touch-btn.fire.overheat {
+  background: linear-gradient(180deg, #c07060, #7a2c24);
+  color: #fde8e4;
+}
+
+.touch-btn.item {
+  min-height: 34px;
+  background: linear-gradient(180deg, #f3d08a, #d4a04a);
+  color: #2a1c08;
+  font-weight: 700;
 }
 
 .touch-pad {
   position: absolute;
-  inset: auto 0 12px;
+  inset: auto 0 6px;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  padding: 0 16px calc(12px + env(safe-area-inset-bottom));
+  padding: 0 12px calc(6px + env(safe-area-inset-bottom));
   pointer-events: none;
   z-index: 5;
+}
+
+.touch-pad.tilt-throttle {
+  justify-content: flex-end;
+}
+
+.touch-pad.tilt-throttle .touch-stick {
+  display: none;
 }
 
 .touch-stick,
@@ -669,8 +1024,8 @@ body,
 }
 
 .touch-stick {
-  width: 132px;
-  height: 132px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: rgba(8, 18, 26, 0.45);
@@ -678,40 +1033,44 @@ body,
   display: grid;
   place-items: center;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 0;
 }
 
 .touch-knob {
   position: absolute;
-  width: 42px;
-  height: 42px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--accent);
   top: 50%;
   left: 50%;
-  margin: -21px 0 0 -21px;
+  margin: -12px 0 0 -12px;
 }
 
 .touch-actions {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
+  width: auto;
+  flex: 0 0 auto;
 }
 
 .touch-btn {
-  min-width: 118px;
-  min-height: 56px;
-  border-radius: 16px;
+  min-width: 72px;
+  width: 72px;
+  min-height: 34px;
+  border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--panel-strong);
   color: var(--text);
   font: inherit;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
 }
 
 .touch-btn.primary {
-  min-height: 88px;
+  min-height: 42px;
   background: linear-gradient(180deg, #8ad7c8, #5ea897);
   color: #082017;
   font-weight: 700;

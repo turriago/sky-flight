@@ -53,11 +53,23 @@ export class Bird {
   }
 
   updateRemote(dt: number, x: number, y: number, z: number, qx: number, qy: number, qz: number, qw: number, speed: number): void {
-    const blend = 1 - Math.exp(-14 * dt);
-    this.group.position.x += (x - this.group.position.x) * blend;
-    this.group.position.y += (y - this.group.position.y) * blend;
-    this.group.position.z += (z - this.group.position.z) * blend;
-    this.group.quaternion.slerp(this.remoteQ.set(qx, qy, qz, qw), blend);
+    this.snapRemote(x, y, z, qx, qy, qz, qw, speed, dt);
+  }
+
+  snapRemote(x: number, y: number, z: number, qx: number, qy: number, qz: number, qw: number, speed: number, dt: number): void {
+    const dx = x - this.group.position.x;
+    const dy = y - this.group.position.y;
+    const dz = z - this.group.position.z;
+    if (dx * dx + dy * dy + dz * dz > 9) {
+      this.group.position.set(x, y, z);
+      this.group.quaternion.set(qx, qy, qz, qw);
+    } else {
+      const blend = 1 - Math.exp(-28 * dt);
+      this.group.position.x += dx * blend;
+      this.group.position.y += dy * blend;
+      this.group.position.z += dz * blend;
+      this.group.quaternion.slerp(this.remoteQ.set(qx, qy, qz, qw), blend);
+    }
     this.mixer?.update(dt);
     this.animation.update(dt, {
       pose: speed > 28 ? "fly" : "plane",

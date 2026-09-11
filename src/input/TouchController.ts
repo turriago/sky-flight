@@ -12,6 +12,10 @@ export class TouchController implements InputController {
   private stickY = 0;
   private throttleOn = false;
   private brakeOn = false;
+  private fireQueued = false;
+  private itemQueued = false;
+  private readonly fireButton: HTMLButtonElement;
+  private readonly itemButton: HTMLButtonElement;
 
   constructor(root: HTMLElement) {
     this.element = document.createElement("div");
@@ -19,9 +23,10 @@ export class TouchController implements InputController {
     this.element.innerHTML = `
       <div class="touch-stick" data-stick>
         <div class="touch-knob" data-knob></div>
-        <span>Girar / altura</span>
       </div>
       <div class="touch-actions">
+        <button type="button" class="touch-btn fire hidden" data-fire>Fuego</button>
+        <button type="button" class="touch-btn item hidden" data-item>Ítem</button>
         <button type="button" class="touch-btn" data-brake>Freno</button>
         <button type="button" class="touch-btn primary" data-gas>Acelerar</button>
       </div>
@@ -31,6 +36,8 @@ export class TouchController implements InputController {
     const stick = this.element.querySelector("[data-stick]")!;
     const gas = this.element.querySelector("[data-gas]")!;
     const brake = this.element.querySelector("[data-brake]")!;
+    this.fireButton = this.element.querySelector("[data-fire]")!;
+    this.itemButton = this.element.querySelector("[data-item]")!;
 
     stick.addEventListener("pointerdown", this.onStickDown);
     window.addEventListener("pointermove", this.onStickMove);
@@ -38,25 +45,87 @@ export class TouchController implements InputController {
     window.addEventListener("pointercancel", this.onStickUp);
     this.bindHold(gas, (on) => { this.throttleOn = on; });
     this.bindHold(brake, (on) => { this.brakeOn = on; });
+    this.fireButton.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      this.fireQueued = true;
+    });
+    this.itemButton.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      this.itemQueued = true;
+    });
+  }
+
+  setFireVisible(on: boolean): void {
+    this.fireButton.classList.toggle("hidden", !on);
+  }
+
+  setFireHot(hot: boolean): void {
+    this.fireButton.classList.toggle("overheat", hot);
+    this.fireButton.textContent = hot ? "Caliente" : "Fuego";
+  }
+
+  consumeFire(): boolean {
+    const queued = this.fireQueued;
+    this.fireQueued = false;
+    return queued;
+  }
+
+  setItemVisible(on: boolean, label = "Ítem"): void {
+    this.itemButton.classList.toggle("hidden", !on);
+    this.itemButton.textContent = label;
+  }
+
+  consumeItem(): boolean {
+    const queued = this.itemQueued;
+    this.itemQueued = false;
+    return queued;
   }
 
   show(): void {
+    this.element.classList.remove("hidden", "tilt-throttle");
+  }
+
+  showThrottleOnly(): void {
     this.element.classList.remove("hidden");
+    this.element.classList.add("tilt-throttle");
+    this.stickX = 0;
+    this.stickY = 0;
+    this.fireQueued = false;
+    const knob = this.element.querySelector<HTMLElement>("[data-knob]");
+    if (knob) {
+      knob.style.transform = "translate(0, 0)";
+    }
+  }
+
+  heldThrottle(): number | null {
+    if (this.throttleOn) {
+      return 1;
+    }
+    if (this.brakeOn) {
+      return -0.85;
+    }
+    return null;
   }
 
   hide(): void {
     this.element.classList.add("hidden");
+    this.element.classList.remove("tilt-throttle");
     this.stickX = 0;
     this.stickY = 0;
     this.throttleOn = false;
     this.brakeOn = false;
+    this.fireQueued = false;
+    this.itemQueued = false;
+    this.fireButton.classList.add("hidden");
+    this.itemButton.classList.add("hidden");
   }
 
   update(): FlightInput {
     this.input.yaw = this.stickX;
+    // Palanca arriba (stickY < 0) = sube. No tocar TiltController.
     this.input.pitch = -this.stickY;
     this.input.throttle = this.throttleOn ? 1 : this.brakeOn ? -0.85 : 0.12;
-    this.input.roll = this.stickX * 0.35;
+    this.input.roll = this.input.yaw * 0.35;
     return clampFlightInput(this.input);
   }
 
@@ -101,7 +170,7 @@ export class TouchController implements InputController {
     this.stickY = Math.max(-1, Math.min(1, dy));
     const knob = this.element.querySelector<HTMLElement>("[data-knob]");
     if (knob) {
-      knob.style.transform = `translate(${this.stickX * 28}px, ${this.stickY * 28}px)`;
+      knob.style.transform = `translate(${this.stickX * 16}px, ${this.stickY * 16}px)`;
     }
   };
 

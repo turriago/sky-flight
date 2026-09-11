@@ -77,17 +77,19 @@ export class FlightController {
     this.position.addScaledVector(this.up, 2.4);
   }
 
-  update(dt: number, input: FlightInput, sampleHeight: (x: number, z: number) => number, cruise = false): void {
+  update(dt: number, input: FlightInput, sampleHeight: (x: number, z: number) => number, cruise = false, mods?: { speedMul?: number; inputMul?: number }): void {
     if (cruise && !this.cruising) {
       this.cruiseAltitude = this.position.y;
     }
     this.cruising = cruise;
 
     const smoothing = FLIGHT.INPUT_SMOOTHING;
+    const inputMul = mods?.inputMul ?? 1;
+    const speedMul = mods?.speedMul ?? 1;
     const throttle = cruise ? 0 : input.throttle;
-    const yaw = cruise ? 0 : input.yaw;
-    const pitch = cruise ? 0 : input.pitch;
-    const roll = cruise ? 0 : input.roll;
+    const yaw = cruise ? 0 : input.yaw * inputMul;
+    const pitch = cruise ? 0 : input.pitch * inputMul;
+    const roll = cruise ? 0 : input.roll * inputMul;
 
     this.smoothThrottle = expDamp(this.smoothThrottle, throttle, smoothing, dt);
     this.smoothYaw = expDamp(this.smoothYaw, yaw, smoothing, dt);
@@ -122,7 +124,7 @@ export class FlightController {
     this.rebuildOrientation();
     this.forward.set(0, 0, -1).applyQuaternion(this.quaternion);
 
-    this.position.addScaledVector(this.forward, this.speed * dt);
+    this.position.addScaledVector(this.forward, this.speed * dt * speedMul);
     this.position.y -= sink;
 
     const half = WORLD.SIZE * 0.5 - WORLD.EDGE_MARGIN;

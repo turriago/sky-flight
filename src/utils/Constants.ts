@@ -81,6 +81,32 @@ export const POSE = {
   WAKE_ARM_SPAN: 2.05,
 } as const;
 
+export const HUNT = {
+  PREY_HP: 3,
+  HUNTER_HP: 2,
+  FIRE_COOLDOWN: 0.32,
+  HEAT_SHOT: 0.22,
+  HEAT_COOL: 0.38,
+  HEAT_COOL_LOCK: 0.24,
+  HEAT_RECOVER: 0.32,
+  HEAD_START: 3,
+  MATCH_TIME: 150,
+  PROJECTILE_SPEED: 52,
+  PROJECTILE_LIFE: 1.35,
+  HIT_RADIUS: 3.4,
+  CATCH_RADIUS: 4.4,
+  CATCH_HOLD: 1.5,
+  HIT_LOCK: 0.75,
+  ITEM_RADIUS: 5.8,
+  ITEM_HOLD: 12,
+  ITEM_SPAWN: 8,
+  TURBO_TIME: 2.5,
+  WIND_TIME: 3,
+  TURBO_MUL: 1.48,
+  WIND_MUL: 0.52,
+  WIND_STEER: 0.42,
+} as const;
+
 export const COLORS = {
   SKY_ZENITH: 0x1a4a70,
   SKY_HORIZON: 0xd7e8ef,

@@ -1,7 +1,8 @@
 import type { MqttClient } from "mqtt";
 import mqtt from "mqtt";
 import { DuelHost, type DuelSend } from "./DuelHost";
-import type { DuelMessage, DuelPhase, DuelPlayerInfo, DuelPose, DuelRole } from "./protocol";
+import type { DuelMessage, DuelMode, DuelPhase, DuelPlayerInfo, DuelPose, DuelRole, HuntCrate, HuntEnd, HuntItemKind } from "./protocol";
+import { huntStartHp } from "./protocol";
 
 type Handler = (message: DuelMessage) => void;
 
@@ -15,16 +16,25 @@ export class MatchClient {
   slot: 0 | 1 | null = null;
   role: DuelRole | null = null;
   room = "";
-  players: DuelPlayerInfo[] = [];
+  players: DuelPlayerInfo[] = [
+    { slot: 0, name: "Naranja", connected: false },
+    { slot: 1, name: "Cian", connected: false },
+  ];
   lastPose: [DuelPose | null, DuelPose | null] = [null, null];
   winner: 0 | 1 | null = null;
+  winnerReason: HuntEnd | "" = "";
   times: [number | null, number | null] = [null, null];
   countdown = 0;
   error = "";
   connected = false;
+  mode: DuelMode = "race";
+  fleeSlot: 0 | 1 = 0;
+  hp: [number, number] = [3, 2];
+  crates: HuntCrate[] = [];
+  held: [HuntItemKind | null, HuntItemKind | null] = [null, null];
 
-  private socket: WebSocket | null = null;
   private mqtt: MqttClient | null = null;
+  private socket: WebSocket | null = null;
   private host: DuelHost | null = null;
   private readonly handlers = new Set<Handler>();
   private readonly senders = new Map<string, DuelSend>();
@@ -34,7 +44,12 @@ export class MatchClient {
   private joinName?: string;
   private clientId = "";
   private helloTimer: ReturnType<typeof setInterval> | null = null;
+  private wsFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private brokerIndex = 0;
+  lastPoseAt: [number, number] = [0, 0];
+  private readonly pilotSend: DuelSend = () => {};
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   on(handler: Handler): () => void {
     this.handlers.add(handler);
@@ -49,10 +64,10 @@ export class MatchClient {
     this.joinName = name;
     this.error = "";
     this.brokerIndex = 0;
+    this.players = emptySeats();
     this.usingMqtt = import.meta.env.PROD;
+    this.emit({ t: "lobby", phase: this.phase, players: this.players });
     if (this.usingMqtt) {
-      this.error = "Abriendo la sala…";
-      this.emit({ t: "error", message: this.error });
       this.connectMqtt();
       return;
     }
@@ -75,18 +90,64 @@ export class MatchClient {
     this.send({ t: "reset" });
   }
 
+  setMode(mode: DuelMode): void {
+    this.mode = mode;
+    if (this.host) {
+      this.host.setMode(mode);
+      return;
+    }
+    this.send({ t: "mode", mode });
+  }
+
+  sendHit(target: 0 | 1, kind: "shot" | "catch" = "shot"): void {
+    this.sendPilot({ t: "hit", target, hp: 0, by: this.slot ?? 0, kind });
+  }
+
+  pilot(): void {
+    if (this.host) {
+      const slot = this.host.pilot(this.pilotSend);
+      if (slot !== null) {
+        this.slot = slot;
+        this.handle({ t: "seated", slot });
+      }
+      return;
+    }
+    this.send({ t: "pilot" });
+  }
+
   sendPose(dt: number, pose: Omit<DuelPose, "t">): void {
     this.sendPoseAcc += dt;
-    if (this.sendPoseAcc < 0.08) {
+    if (this.sendPoseAcc < 0.02) {
       return;
     }
     this.sendPoseAcc = 0;
-    this.send({ t: "pose", ...pose });
+    this.sendPilot({ t: "pose", ...pose });
+  }
+
+  sendShot(shot: Omit<Extract<DuelMessage, { t: "shot" }>, "t">): void {
+    this.sendPilot({ t: "shot", ...shot });
+  }
+
+  sendGrab(id: number): void {
+    this.sendPilot({ t: "grab", id });
+  }
+
+  sendUse(): void {
+    this.sendPilot({ t: "use" });
   }
 
   close(): void {
     this.closed = true;
     this.stopHello();
+    this.stopHeartbeat();
+    if (this.wsFallbackTimer) {
+      clearTimeout(this.wsFallbackTimer);
+      this.wsFallbackTimer = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.socket?.close();
     this.socket = null;
     this.host?.dispose();
@@ -99,26 +160,59 @@ export class MatchClient {
   }
 
   private connectSocket(role: DuelRole, name?: string): void {
+    if (this.closed || this.usingMqtt) {
+      return;
+    }
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${location.host}/__sky/ws`);
     this.socket = socket;
     socket.addEventListener("open", () => {
       this.connected = true;
+      this.error = "";
+      this.startHeartbeat();
       this.send({ t: "hello", role, room: this.room, name });
+      this.emit({ t: "lobby", phase: this.phase, players: this.players });
     });
     socket.addEventListener("message", (event) => {
       this.parseIncoming(event.data);
     });
     socket.addEventListener("close", () => {
+      this.stopHeartbeat();
       this.connected = false;
-      if (!this.error) {
-        this.error = "Conexión perdida. Misma Wi‑Fi y recarga.";
+      if (this.closed || this.usingMqtt || this.socket !== socket) {
+        return;
       }
+      this.error = "Reconectando a la sala…";
       this.emit({ t: "error", message: this.error });
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (!this.closed && !this.usingMqtt) {
+          this.error = "";
+          this.connectSocket(role, name);
+        }
+      }, 1000);
     });
     socket.addEventListener("error", () => {
-      this.error = "No se pudo abrir la sala. Usa la IP de la red, no localhost.";
+      if (!this.connected) {
+        this.error = "Sala local no disponible. Recarga el QR.";
+      }
     });
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeat = setInterval(() => {
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        this.socket.send(JSON.stringify({ t: "ping" }));
+      }
+    }, 15000);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
   }
 
   private connectMqtt(): void {
@@ -143,6 +237,7 @@ export class MatchClient {
       }
       this.connected = true;
       this.error = "";
+      this.emit({ t: "lobby", phase: this.phase, players: this.players });
       if (this.role === "admin") {
         this.host ??= new DuelHost(this.room, (message) => this.handle(message));
         client.subscribe(this.topicUp(), { qos: 0 }, () => {
@@ -260,6 +355,9 @@ export class MatchClient {
       this.room = message.room;
       this.phase = message.phase;
       this.players = message.players;
+      this.mode = message.mode ?? this.mode;
+      this.fleeSlot = message.fleeSlot ?? this.fleeSlot;
+      this.hp = huntStartHp(this.fleeSlot);
       this.error = "";
       if (message.role === "player") {
         this.stopHello();
@@ -268,16 +366,39 @@ export class MatchClient {
       this.phase = message.phase;
       this.players = message.players;
       this.countdown = message.count ?? 0;
+      this.mode = message.mode ?? this.mode;
+      this.fleeSlot = message.fleeSlot ?? this.fleeSlot;
       if (message.phase === "lobby") {
         this.winner = null;
+        this.winnerReason = "";
         this.times = [null, null];
         this.lastPose = [null, null];
+        this.lastPoseAt = [0, 0];
+        this.hp = huntStartHp(this.fleeSlot);
+        this.crates = [];
+        this.held = [null, null];
       }
+      if (message.phase === "countdown" || message.phase === "racing") {
+        this.hp = huntStartHp(this.fleeSlot);
+      }
+    } else if (message.t === "crates") {
+      this.crates = message.crates;
+    } else if (message.t === "held") {
+      this.held[message.slot] = message.kind;
+    } else if (message.t === "seated") {
+      this.slot = message.slot;
     } else if (message.t === "pose") {
       this.lastPose[message.slot] = message;
+      this.lastPoseAt[message.slot] = performance.now();
+      if (typeof message.hp === "number") {
+        this.hp[message.slot] = message.hp;
+      }
+    } else if (message.t === "hit") {
+      this.hp[message.target] = message.hp;
     } else if (message.t === "over") {
       this.phase = "finished";
       this.winner = message.winner;
+      this.winnerReason = message.reason ?? "";
       this.times = message.times;
     } else if (message.t === "error") {
       this.error = message.message;
@@ -299,6 +420,14 @@ export class MatchClient {
     if (this.usingMqtt && this.role === "player") {
       this.publishUp(message);
     }
+  }
+
+  private sendPilot(message: DuelMessage): void {
+    if (this.host && this.slot !== null) {
+      this.host.incoming(this.pilotSend, message);
+      return;
+    }
+    this.send(message);
   }
 
   private publishUp(message: DuelMessage): void {
@@ -324,6 +453,13 @@ export class MatchClient {
   private topicPlayer(id: string): string {
     return `skyflight/${this.room}/p/${id}`;
   }
+}
+
+function emptySeats(): DuelPlayerInfo[] {
+  return [
+    { slot: 0, name: "Naranja", connected: false },
+    { slot: 1, name: "Cian", connected: false },
+  ];
 }
 
 function mqttId(role: string, room: string): string {

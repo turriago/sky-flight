@@ -1,3 +1,12 @@
+export function adminRoomFromLocation(): string | null {
+  const params = new URLSearchParams(location.search);
+  if (params.get("admin") !== "1") {
+    return null;
+  }
+  const duel = params.get("duel");
+  return duel ? duel.toUpperCase() : null;
+}
+
 export function duelRoomFromLocation(): string | null {
   const params = new URLSearchParams(location.search);
   if (params.get("admin") === "1") {
@@ -24,14 +33,37 @@ export async function duelJoinUrl(room: string): Promise<string> {
   if (local) {
     try {
       const response = await fetch("/__sky/lan");
-      const data = (await response.json()) as { host?: string };
-      if (data.host && data.host !== "localhost") {
-        const port = location.port ? `:${location.port}` : "";
-        return `${location.protocol}//${data.host}${port}/j/${code}`;
+      const data = (await response.json()) as { publicUrl?: string; host?: string; port?: number };
+      if (data.publicUrl?.startsWith("https://")) {
+        return `${data.publicUrl.replace(/\/$/, "")}/j/${code}`;
+      }
+      const host = data.host;
+      const port = data.port || 5173;
+      if (host && host !== "localhost" && host !== "127.0.0.1") {
+        return `http://${host}:${port}/j/${code}`;
       }
     } catch {
-      // usa origin si no hay IP de red
+      // el túnel HTTPS aún no está listo
     }
+    return "";
   }
-  return `${location.origin}/j/${code}`;
+  if (location.protocol === "https:") {
+    return `${location.origin}/j/${code}`;
+  }
+  return `https://jueguito-mu.vercel.app/j/${code}`;
+}
+
+export async function waitForHttpsJoinUrl(room: string, tries = 40): Promise<string> {
+  for (let i = 0; i < tries; i++) {
+    const url = await duelJoinUrl(room);
+    if (url) {
+      return url;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  const local = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  if (local) {
+    return "";
+  }
+  return `https://jueguito-mu.vercel.app/j/${room.toUpperCase()}`;
 }

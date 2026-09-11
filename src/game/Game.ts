@@ -25,12 +25,16 @@ import { HUD } from "../ui/HUD";
 import { MainMenu } from "../ui/MainMenu";
 import { DuelPanel } from "../ui/DuelPanel";
 import { BodyCoach } from "../ui/BodyCoach";
+import { FlightGuide, guideFromInput } from "../ui/FlightGuide";
 import { WebcamPanel } from "../ui/WebcamPanel";
 import { PoseDetector } from "../vision/PoseDetector";
 import { MatchClient } from "../net/MatchClient";
-import { duelJoinUrl, duelRoomFromLocation } from "../net/joinUrl";
-import { randomRoomCode, type DuelMessage } from "../net/protocol";
-import { COURSE, POSE } from "../utils/Constants";
+import { adminRoomFromLocation, duelJoinUrl, duelRoomFromLocation, waitForHttpsJoinUrl } from "../net/joinUrl";
+import { HuntPickups } from "./HuntPickups";
+import { ITEM_LABEL, randomRoomCode, type DuelMessage, type DuelPose } from "../net/protocol";
+import { COURSE, HUNT, POSE } from "../utils/Constants";
+import { browserIssueMessage, detectBrowserIssue } from "../utils/Browser";
+import { HuntCombat } from "./HuntCombat";
 import { World } from "./World";
 
 export class Game {
@@ -53,9 +57,11 @@ export class Game {
   private readonly menu: MainMenu;
   private readonly duelPanel: DuelPanel;
   private readonly coach: BodyCoach;
+  private readonly flightGuide: FlightGuide;
   private readonly webcam: WebcamPanel;
   private readonly touch: TouchController;
   private readonly tilt = new TiltController();
+  private readonly rotateHint: HTMLElement;
   private readonly match = new MatchClient();
   private readonly demoInput: FlightInput = createFlightInput();
   private readonly mixedInput: FlightInput = createFlightInput();
@@ -68,8 +74,23 @@ export class Game {
   private session: "solo" | "admin" | "player" = "solo";
   private hitCooldown = 0;
   private joinUrl = "";
+  private joinPoll: number | null = null;
   private lastMatchPhase = "";
   private playerSteer: "none" | "tilt" | "touch" = "none";
+  private adminFollowSlot: 0 | 1 | null = null;
+  private adminPilot = false;
+  private readonly combat = new HuntCombat();
+  private readonly pickups = new HuntPickups();
+  private huntStartAt = 0;
+  private heat = 0;
+  private overheated = false;
+  private fireCool = 0;
+  private catchAcc = 0;
+  private fireKey = false;
+  private huntHudAcc = 0;
+  private turboUntil = 0;
+  private windUntil = 0;
+  private lastGrabId = -1;
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.scene.background = new Color(0xa9c6d2);
@@ -95,6 +116,8 @@ export class Game {
     this.scene.add(this.bird.group);
     this.rival.group.visible = false;
     this.scene.add(this.rival.group);
+    this.scene.add(this.combat.group);
+    this.scene.add(this.pickups.group);
     this.ghost = new Ghost(this.bird.visualRoot);
     this.scene.add(this.ghost.group);
 
@@ -112,24 +135,51 @@ export class Game {
       () => { void this.startAdminDuel(); },
       () => { void this.toggleCamera(); },
     );
-    this.duelPanel = new DuelPanel(uiRoot, () => this.match.startMatch(), () => this.match.resetMatch());
+    this.duelPanel = new DuelPanel(
+      uiRoot,
+      () => this.match.startMatch(),
+      () => this.match.resetMatch(),
+      (mode) => {
+        this.match.setMode(mode);
+        void this.refreshDuelPanel();
+      },
+      () => this.pilotFromAdmin(),
+    );
     this.coach = new BodyCoach(
       uiRoot,
       () => { void this.enableTilt(); },
       () => this.playWithTouch(),
+      () => { void this.openInChrome(); },
     );
+    this.flightGuide = new FlightGuide(uiRoot);
     this.webcam = new WebcamPanel(uiRoot);
     this.touch = new TouchController(uiRoot);
+    this.rotateHint = document.createElement("div");
+    this.rotateHint.className = "rotate-hint";
+    this.rotateHint.innerHTML = `
+      <div class="rotate-phone" aria-hidden="true"></div>
+      <p class="rotate-title">Gira el celular</p>
+      <p class="rotate-lead">El juego solo funciona en horizontal. Ponte en horizontal para volar.</p>
+    `;
+    uiRoot.appendChild(this.rotateHint);
     this.match.on((message) => { void this.onMatchMessage(message); });
 
     this.flight.reset(6, 42, 118, 0);
     this.followCamera.snapTo(this.flight);
     window.addEventListener("resize", this.handleResize);
+    window.addEventListener("orientationchange", this.handleResize);
+    screen.orientation?.addEventListener("change", this.handleResize);
     window.addEventListener("keydown", this.handleHotkeys);
+    window.addEventListener("pointerdown", this.onHuntTap);
 
-    const room = duelRoomFromLocation();
-    if (room) {
-      void this.joinAsPlayer(room);
+    const adminRoom = adminRoomFromLocation();
+    if (adminRoom) {
+      void this.startAdminDuel(adminRoom);
+    } else {
+      const room = duelRoomFromLocation();
+      if (room) {
+        void this.joinAsPlayer(room);
+      }
     }
   }
 
@@ -155,7 +205,10 @@ export class Game {
     this.match.close();
     this.assets.clear();
     window.removeEventListener("resize", this.handleResize);
+    window.removeEventListener("orientationchange", this.handleResize);
+    screen.orientation?.removeEventListener("change", this.handleResize);
     window.removeEventListener("keydown", this.handleHotkeys);
+    window.removeEventListener("pointerdown", this.onHuntTap);
     this.renderer.dispose();
   }
 
@@ -185,8 +238,11 @@ export class Game {
     await this.audio.start();
   };
 
-  private startAdminDuel = async (): Promise<void> => {
-    const room = randomRoomCode();
+  private startAdminDuel = async (existingRoom?: string): Promise<void> => {
+    if (this.session === "admin") {
+      return;
+    }
+    const room = existingRoom ?? randomRoomCode();
     history.replaceState(null, "", `?admin=1&duel=${room}`);
     this.session = "admin";
     this.mode = "race";
@@ -196,14 +252,22 @@ export class Game {
     this.ghost.hide();
     this.rival.group.visible = true;
     this.world.course.arm();
-    this.joinUrl = await duelJoinUrl(room);
+    this.joinUrl = "";
     this.match.connect("admin", room);
+    this.watchJoinUrl(room);
+    await this.refreshDuelPanel();
+    this.joinUrl = await waitForHttpsJoinUrl(room);
     this.placeAtSlot(0);
     this.placeRivalAtSlot(1);
-    this.followCamera.updatePair(
-      0.016,
-      this.bird.group.position.x, this.bird.group.position.y, this.bird.group.position.z,
-      this.rival.group.position.x, this.rival.group.position.y, this.rival.group.position.z,
+    this.adminFollowSlot = null;
+    this.followCamera.snapTarget(
+      this.bird.group.position.x,
+      this.bird.group.position.y,
+      this.bird.group.position.z,
+      this.bird.group.quaternion.x,
+      this.bird.group.quaternion.y,
+      this.bird.group.quaternion.z,
+      this.bird.group.quaternion.w,
     );
     await this.refreshDuelPanel();
     try {
@@ -213,6 +277,27 @@ export class Game {
     }
   };
 
+  private watchJoinUrl(room: string): void {
+    if (this.joinPoll !== null) {
+      window.clearInterval(this.joinPoll);
+    }
+    this.joinPoll = window.setInterval(() => {
+      void this.refreshJoinUrl(room);
+    }, 1000);
+    void this.refreshDuelPanel();
+  }
+
+  private async refreshJoinUrl(room: string): Promise<void> {
+    if (this.session !== "admin" || this.match.phase !== "lobby") {
+      return;
+    }
+    const url = await duelJoinUrl(room);
+    if (url && url !== this.joinUrl) {
+      this.joinUrl = url;
+      await this.refreshDuelPanel();
+    }
+  }
+
   private joinAsPlayer = async (room: string): Promise<void> => {
     this.session = "player";
     this.mode = "race";
@@ -221,19 +306,32 @@ export class Game {
     this.hud.hide();
     this.ghost.hide();
     this.rival.group.visible = true;
-    this.touch.hide();
+    this.touch.show();
     this.webcam.setPlayerLayout(false);
     this.playerSteer = "none";
     this.tilt.tryListen();
     this.coach.show();
+    this.flightGuide.show();
+    document.body.classList.add("player-session");
+    this.updateOrientationHint();
+    void lockLandscape();
+    const unlock = (): void => {
+      void this.audio.start();
+      void lockLandscape();
+      window.removeEventListener("pointerdown", unlock);
+    };
+    window.addEventListener("pointerdown", unlock, { once: true });
+    if (window.isSecureContext) {
+      const orientation = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
+      if (typeof orientation.requestPermission !== "function") {
+        void this.enableTilt();
+      }
+    } else {
+      this.coach.setHint("Este enlace es http y Brave bloquea el sensor. Cierra la pestaña, en el PC espera el QR con candado y vuelve a escanear.");
+    }
     this.world.course.arm();
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.match.connect("player", room.toUpperCase());
-    const unlockAudio = (): void => {
-      void this.audio.start();
-      window.removeEventListener("pointerdown", unlockAudio);
-    };
-    window.addEventListener("pointerdown", unlockAudio, { once: true });
     try {
       await this.audio.start();
     } catch {
@@ -250,13 +348,35 @@ export class Game {
       this.lastMatchPhase = this.match.phase;
       if (this.match.phase === "lobby" || this.match.phase === "countdown") {
         this.resetDuelCrafts();
+        this.adminFollowSlot = null;
       }
       if (this.match.phase === "racing") {
         this.world.course.beginRace();
+        this.beginHuntRound();
       }
     }
+    if (message.t === "seated") {
+      this.adminPilot = true;
+      this.placeAtSlot(message.slot);
+      this.followCamera.snapTo(this.flight);
+      if (this.match.phase === "racing" || this.match.phase === "countdown") {
+        this.beginHuntRound();
+      }
+    }
+    if (message.t === "shot" && message.slot !== this.match.slot) {
+      this.combat.spawn(message.x, message.y, message.z, message.dx, message.dy, message.dz, false);
+    }
+    if (message.t === "hit" && message.target === this.match.slot && (this.session === "player" || this.adminPilot)) {
+      this.flight.applyHit();
+    }
+    if (message.t === "crates") {
+      this.pickups.setCrates(message.crates);
+    }
+    if (message.t === "fx") {
+      this.applyHuntFx(message.kind, message.by, message.target);
+    }
     if (message.t === "pose") {
-      if (this.match.phase === "racing" || this.match.phase === "finished") {
+      if (this.match.mode === "race" && (this.match.phase === "racing" || this.match.phase === "finished")) {
         this.duelPanel.setRings(this.liveRings(), this.world.course.status.total);
       }
       return;
@@ -264,12 +384,51 @@ export class Game {
     await this.refreshDuelPanel();
   }
 
+  private beginHuntRound(): void {
+    this.huntStartAt = performance.now();
+    this.fireCool = 0;
+    this.catchAcc = 0;
+    this.combat.clear();
+    this.heat = 0;
+    this.overheated = false;
+    this.turboUntil = 0;
+    this.windUntil = 0;
+    this.lastGrabId = -1;
+    this.pickups.clear();
+  }
+
   private resetDuelCrafts(): void {
-    const slot = this.session === "player" ? (this.match.slot ?? 0) : 0;
+    const slot = this.match.slot ?? 0;
     this.placeAtSlot(slot);
     this.placeRivalAtSlot(slot === 0 ? 1 : 0);
     this.world.course.arm();
     this.hitCooldown = 0.6;
+  }
+
+  private pilotFromAdmin(): void {
+    if (this.session !== "admin" || this.adminPilot) {
+      return;
+    }
+    this.match.pilot();
+  }
+
+  private adminPilotInput(keyboard: FlightInput): FlightInput {
+    if (this.huntHoldLeft() > 0) {
+      this.demoInput.throttle = 0;
+      this.demoInput.yaw = 0;
+      this.demoInput.pitch = 0;
+      this.demoInput.roll = 0;
+      return this.demoInput;
+    }
+    return keyboard;
+  }
+
+  private localMesh(): Bird {
+    return this.match.slot === 1 ? this.rival : this.bird;
+  }
+
+  private remoteMesh(): Bird {
+    return this.match.slot === 1 ? this.bird : this.rival;
   }
 
   private placeAtSlot(slot: 0 | 1): void {
@@ -311,13 +470,32 @@ export class Game {
       times: this.match.times,
       rings: this.liveRings(),
       total: this.world.course.status.total,
+      matchMode: this.match.mode,
+      fleeSlot: this.match.fleeSlot,
+      hp: this.match.hp,
+      winnerReason: this.match.winnerReason,
+      localSlot: this.match.slot,
+      heat: this.heat,
+      overheated: this.overheated,
+      huntHold: this.huntHoldLeft(),
+      huntTimeLeft: Math.max(0, HUNT.MATCH_TIME - this.world.course.status.flown),
+      rivalDist: this.remoteMesh().group.visible
+        ? this.flight.position.distanceTo(this.remoteMesh().group.position)
+        : 0,
+      canPilot: this.session === "admin"
+        && !this.adminPilot
+        && this.match.slot === null
+        && this.match.phase !== "finished"
+        && this.match.players.some((player) => !player.connected),
+      heldKind: this.match.slot !== null ? this.match.held[this.match.slot] : null,
+      huntArrow: this.huntArrow(),
     });
   }
 
   private liveRings(): [number, number] {
     const localRings = this.world.course.status.passed;
     const other = this.match.slot === 0 ? this.match.lastPose[1] : this.match.lastPose[0];
-    if (this.session === "admin") {
+    if (this.session === "admin" && !this.adminPilot) {
       return [this.match.lastPose[0]?.rings ?? 0, this.match.lastPose[1]?.rings ?? 0];
     }
     return this.match.slot === 0
@@ -340,45 +518,56 @@ export class Game {
 
   private tick = (): void => {
     const dt = Math.min(this.clock.getDelta(), 0.05);
-    if (this.session === "admin") {
+    if (this.session === "admin" && !this.adminPilot) {
       this.tickAdmin(dt);
       return;
     }
-    if (this.detector.running) {
-      this.detector.detect();
+    const isPilot = this.session === "player" || this.adminPilot;
+    if (this.session !== "admin") {
+      if (this.detector.running) {
+        this.detector.detect();
+      }
     }
-    const pose = this.pose.update(dt, this.detector.running ? this.detector.latest : null);
-    this.webcam.setTracking(this.detector.running && this.pose.visible && !this.pose.resting);
-    this.webcam.drawPose(this.detector.latest?.landmarks ?? null);
+    const pose = this.session === "admin"
+      ? this.demoInput
+      : this.pose.update(dt, this.detector.running ? this.detector.latest : null);
+    if (this.session !== "admin") {
+      this.webcam.setTracking(this.detector.running && this.pose.visible && !this.pose.resting);
+      this.webcam.drawPose(this.detector.latest?.landmarks ?? null);
+    }
     if (this.session === "player") {
       this.updatePlayerCoach();
     }
     const keyboard = this.keyboard.update();
     const usingKeys = inputActive(keyboard);
     const touch = this.touch.update();
-    if (this.session === "player" && this.match.phase !== "racing") {
-      this.demoInput.throttle = 0;
-      this.demoInput.yaw = 0;
-      this.demoInput.pitch = 0;
-      this.demoInput.roll = 0;
-    }
     const live = this.session === "player"
       ? this.playerInput(pose, touch, keyboard)
-      : this.playing
-        ? (this.detector.running ? preferOverride(pose, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE) : keyboard)
-        : this.updateDemoInput();
+      : this.adminPilot
+        ? this.adminPilotInput(keyboard)
+        : this.playing
+          ? (this.detector.running ? preferOverride(pose, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE) : keyboard)
+          : this.updateDemoInput();
     const usingTouch = inputActive(touch);
     const cruise = this.playing && this.pose.resting && this.detector.running && !usingKeys && !usingTouch;
+    const blocked = this.session === "player" && this.isPortraitPlay();
 
-    this.flight.update(dt, live, (x, z) => this.world.getHeightAt(x, z), cruise);
-    this.bird.update(dt, this.flight);
-    this.followCamera.update(dt, this.flight);
+    if (!blocked) {
+      this.flight.update(dt, live, (x, z) => this.world.getHeightAt(x, z), cruise && !this.adminPilot, this.huntFlightMods());
+    }
     if (this.session === "player") {
+      this.flightGuide.setMove(guideFromInput(live.yaw, live.pitch, live.throttle));
+    }
+    this.localMesh().update(dt, this.flight);
+    this.localMesh().group.visible = true;
+    this.followCamera.update(dt, this.flight);
+    this.tickHunt(dt);
+    if (isPilot) {
       this.syncDuelPlayer(dt);
     }
-    if (this.playing && this.mode === "race" && (this.session === "solo" || this.match.phase === "racing")) {
+    if (!blocked && this.playing && this.mode === "race" && (this.session === "solo" || this.match.phase === "racing")) {
       this.hitCooldown = Math.max(0, this.hitCooldown - dt);
-      const racing = this.world.course.status.phase === "racing" || this.session === "player";
+      const racing = this.world.course.status.phase === "racing" || isPilot;
       if (racing && this.hitCooldown <= 0) {
         const hit = this.world.hitTest(
           this.flight.position.x,
@@ -408,29 +597,46 @@ export class Game {
   };
 
   private tickAdmin(dt: number): void {
-    const a = this.match.lastPose[0];
-    const b = this.match.lastPose[1];
+    const now = performance.now();
+    const a = this.match.lastPose[0] && now - this.match.lastPoseAt[0] < 900 ? this.match.lastPose[0] : null;
+    const b = this.match.lastPose[1] && now - this.match.lastPoseAt[1] < 900 ? this.match.lastPose[1] : null;
+    this.bird.group.visible = Boolean(a) || (!a && !b);
+    this.rival.group.visible = Boolean(b);
     if (a) {
-      this.bird.updateRemote(dt, a.x, a.y, a.z, a.qx, a.qy, a.qz, a.qw, a.spd);
+      this.bird.snapRemote(a.x, a.y, a.z, a.qx, a.qy, a.qz, a.qw, a.spd, dt);
     }
     if (b) {
-      this.rival.updateRemote(dt, b.x, b.y, b.z, b.qx, b.qy, b.qz, b.qw, b.spd);
+      this.rival.snapRemote(b.x, b.y, b.z, b.qx, b.qy, b.qz, b.qw, b.spd, dt);
     }
-    this.followCamera.updatePair(
-      dt,
-      this.bird.group.position.x, this.bird.group.position.y, this.bird.group.position.z,
-      this.rival.group.position.x, this.rival.group.position.y, this.rival.group.position.z,
-    );
+    const live = pickLivePose(a, b);
+    if (live) {
+      const slot: 0 | 1 = live === a ? 0 : 1;
+      if (this.adminFollowSlot !== slot) {
+        this.followCamera.snapTarget(live.x, live.y, live.z, live.qx, live.qy, live.qz, live.qw);
+        this.adminFollowSlot = slot;
+      } else {
+        this.followCamera.updateTarget(dt, live.x, live.y, live.z, live.qx, live.qy, live.qz, live.qw);
+      }
+    }
+    this.combat.update(dt, null);
+    this.pickups.update(dt);
     this.world.update(dt);
     this.audio.setFlightLevel(((a?.spd ?? 20) + (b?.spd ?? 20)) * 1.8, this.bird.group.position.y);
+    if (this.match.mode === "hunt" && this.match.phase === "racing") {
+      this.pulseHuntHud(dt);
+    }
     this.renderer.render(this.scene, this.camera);
   }
 
   private syncDuelPlayer(dt: number): void {
     const otherSlot = this.match.slot === 0 ? 1 : 0;
     const other = this.match.lastPose[otherSlot];
+    const remote = this.remoteMesh();
     if (other) {
-      this.rival.updateRemote(dt, other.x, other.y, other.z, other.qx, other.qy, other.qz, other.qw, other.spd);
+      remote.updateRemote(dt, other.x, other.y, other.z, other.qx, other.qy, other.qz, other.qw, other.spd);
+      remote.group.visible = true;
+    } else if (this.adminPilot || this.session === "player") {
+      remote.group.visible = Boolean(other);
     }
     if (this.match.slot === null) {
       return;
@@ -447,18 +653,38 @@ export class Game {
       qw: this.flight.quaternion.w,
       spd: this.flight.speed,
       rings: status.passed,
-      time: status.time,
-      done: status.phase === "finished" ? 1 : 0,
+      time: this.match.mode === "hunt" ? status.flown : status.time,
+      done: (this.match.mode !== "hunt" || this.isHuntPrey()) && status.phase === "finished" ? 1 : 0,
+      hp: this.match.hp[this.match.slot],
+      ammo: Math.round(this.heat * 100),
     });
   }
 
   private playerInput(pose: FlightInput, touch: FlightInput, keyboard: FlightInput): FlightInput {
-    if (this.match.phase !== "racing") {
+    if (this.huntHoldLeft() > 0) {
+      this.demoInput.throttle = 0;
+      this.demoInput.yaw = 0;
+      this.demoInput.pitch = 0;
+      this.demoInput.roll = 0;
       return this.demoInput;
     }
-    if (this.playerSteer === "tilt" || (this.playerSteer !== "touch" && this.tilt.enabled)) {
-      preferOverride(this.tilt.update(), touch, this.mixedInput, 0.38);
-      return preferOverride(this.mixedInput, keyboard, this.mixedInput, POSE.KEYBOARD_OVERRIDE);
+    if (this.isPortraitPlay()) {
+      this.demoInput.throttle = 0;
+      this.demoInput.yaw = 0;
+      this.demoInput.pitch = 0;
+      this.demoInput.roll = 0;
+      return this.demoInput;
+    }
+    if (this.playerSteer !== "touch" && (this.playerSteer === "tilt" || this.tilt.enabled || this.tilt.hasSignal)) {
+      const tilt = this.tilt.update();
+      const boost = this.touch.heldThrottle();
+      if (boost !== null) {
+        tilt.throttle = boost;
+      }
+      return tilt;
+    }
+    if (this.playerSteer === "touch") {
+      return preferOverride(touch, keyboard, this.mixedInput, 0.12);
     }
     if (this.detector.running) {
       preferOverride(pose, touch, this.mixedInput, 0.22);
@@ -476,14 +702,15 @@ export class Game {
     this.coach.setHint("Activando el sensor de movimiento…");
     const ok = await this.tilt.enable();
     if (!ok) {
-      this.coach.setHint("El iPhone pidió permiso y no se concedió. Usa palanca, o pulsa de nuevo y acepta.");
+      this.coach.setSteer("pick");
+      this.coach.setHint("El iPhone pidió permiso. Pulsa Celular otra vez y acepta, o usa Botones.");
       return;
     }
     this.playerSteer = "tilt";
-    this.touch.show();
-    this.touch.element.classList.add("fallback", "tilt-mode");
-    this.coach.setArmed(true);
-    this.coach.setHint("Listo. Inclina el celular. Recalibrar si el ave se desvía sola.");
+    this.touch.showThrottleOnly();
+    this.coach.setSteer("tilt");
+    await lockLandscape();
+    this.coach.setHint("Inclina el celular. Toca Botones si quieres la palanca.");
     try {
       await this.audio.start();
     } catch {
@@ -496,35 +723,75 @@ export class Game {
     this.tilt.enabled = false;
     this.touch.show();
     this.touch.element.classList.remove("fallback", "tilt-mode");
-    this.coach.setArmed(false);
-    this.coach.setHint("Palanca para girar y altura. Acelerar a la derecha.");
+    this.coach.setSteer("touch");
+    this.coach.setHint("Palanca y botones. Toca Celular para volver a inclinar.");
+  }
+
+  private async openInChrome(): Promise<void> {
+    const url = location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      this.coach.setHint("Enlace copiado. Si no abre solo, pégalo en Chrome.");
+    } catch {
+      this.coach.setHint("Copia el enlace de la barra y ábrelo en Chrome.");
+    }
+    const parsed = new URL(url);
+    const path = `${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    location.href = `intent://${path}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url)};end`;
+    window.setTimeout(() => {
+      location.href = `googlechrome://navigate?url=${encodeURIComponent(url)}`;
+    }, 400);
   }
 
   private updatePlayerCoach(): void {
-    const racing = this.match.phase === "racing" || this.match.phase === "finished";
-    const tiltOn = this.playerSteer === "tilt" && this.tilt.enabled;
-    this.coach.setArmed(tiltOn);
-    this.coach.element.classList.toggle("racing", racing);
+    this.updateOrientationHint();
+    const livePhase = this.match.phase === "countdown" || this.match.phase === "racing" || this.match.phase === "finished";
+    const tiltOn = this.playerSteer === "tilt";
+    this.coach.setSteer(this.playerSteer === "none" ? "pick" : this.playerSteer);
+    this.coach.element.classList.toggle("racing", livePhase || this.playerSteer !== "none");
     if (tiltOn) {
+      this.touch.showThrottleOnly();
+    } else {
       this.touch.show();
-      this.touch.element.classList.add("fallback", "tilt-mode");
-      this.coach.setHint(racing
-        ? (this.tilt.hasSignal ? "Inclina el celular para volar." : "No llega el sensor. Recalibra o usa palanca.")
-        : "Listo. Con un celular basta. Inclina cuando empiece.");
+      this.touch.element.classList.remove("fallback", "tilt-mode");
+    }
+    this.syncHuntButtons();
+    const issue = detectBrowserIssue();
+    const warnBrowser = this.session === "player" && Boolean(issue) && !this.tilt.hasSignal;
+    this.coach.setChromeHint(warnBrowser, browserIssueMessage(issue));
+    this.coach.element.classList.toggle("needs-browser", warnBrowser);
+    if (!window.isSecureContext && this.playerSteer !== "touch") {
+      this.coach.setHint("En http el sensor está bloqueado. Usa Botones, o el QR con candado.");
+      return;
+    }
+    if (tiltOn) {
+      this.coach.setHint("Celular: inclina para volar. Botones cuando quieras.");
       return;
     }
     if (this.playerSteer === "touch") {
-      this.touch.show();
-      this.touch.element.classList.remove("fallback", "tilt-mode");
+      this.coach.setHint("Botones: palanca y acelerar. Celular cuando quieras.");
       return;
     }
-    if (racing) {
-      this.touch.show();
-      this.touch.element.classList.remove("fallback", "tilt-mode");
-      this.coach.setHint("Usa la palanca, o pulsa Volar con el celular.");
-      return;
+    this.coach.setHint("Elige Celular para inclinar, o Botones para la palanca.");
+  }
+
+  private updateOrientationHint(): void {
+    const portrait = this.isPortraitPlay();
+    const wasPortrait = document.body.classList.contains("portrait");
+    document.body.classList.toggle("portrait", portrait);
+    if (wasPortrait && !portrait && this.tilt.enabled) {
+      this.tilt.calibrate();
     }
-    this.coach.setHint("Pulsa Volar con el celular e inclínalo. Palanca solo si lo prefieres.");
+    if (!portrait && this.session === "player") {
+      void lockLandscape();
+    }
+  }
+
+  private isPortraitPlay(): boolean {
+    if (this.session !== "player") {
+      return false;
+    }
+    return window.innerHeight > window.innerWidth + 80;
   }
 
   private async toggleCamera(): Promise<void> {
@@ -606,7 +873,219 @@ export class Game {
     if (event.code === "KeyT") {
       event.preventDefault();
       this.restartRace();
+      return;
     }
+    if (event.code === "KeyF") {
+      event.preventDefault();
+      this.fireKey = true;
+      return;
+    }
+    if (event.code === "KeyC") {
+      event.preventDefault();
+      this.tryUseItem();
+    }
+  }
+
+  private onHuntTap = (event: PointerEvent): void => {
+    if (this.session !== "player" || this.match.mode !== "hunt" || this.playerSteer !== "tilt") {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest("button, .touch-pad, .body-coach, .duel-panel, .flight-guide")) {
+      return;
+    }
+    if (event.clientX < window.innerWidth * 0.68) {
+      return;
+    }
+    this.tryHuntFire();
+  };
+
+  private tickHunt(dt: number): void {
+    this.pickups.update(dt);
+    if ((this.session !== "player" && !this.adminPilot) || this.match.mode !== "hunt") {
+      this.combat.update(dt, null);
+      return;
+    }
+    this.fireCool = Math.max(0, this.fireCool - dt);
+    this.tickWeaponHeat(dt);
+    this.duelPanel.setHeat(this.heat, this.overheated);
+    if (this.touch.consumeFire() || this.fireKey) {
+      this.fireKey = false;
+      this.tryHuntFire();
+    }
+    if (this.touch.consumeItem()) {
+      this.tryUseItem();
+    }
+    this.tryGrabCrate();
+    this.syncHuntButtons();
+    const remote = this.remoteMesh();
+    const aim = this.match.phase === "racing" && remote.group.visible ? remote.group.position : null;
+    if (this.combat.update(dt, aim) && this.match.slot !== null) {
+      this.match.sendHit(this.match.slot === 0 ? 1 : 0, "shot");
+    }
+    if (this.match.phase === "racing" && this.isHuntHunter() && this.huntHoldLeft() <= 0 && aim) {
+      if (this.flight.position.distanceTo(aim) <= HUNT.CATCH_RADIUS) {
+        this.catchAcc += dt;
+        if (this.catchAcc >= HUNT.CATCH_HOLD) {
+          this.catchAcc = 0;
+          this.match.sendHit(this.match.fleeSlot, "catch");
+        }
+      } else {
+        this.catchAcc = 0;
+      }
+    }
+    if (this.match.phase === "racing" || this.match.phase === "countdown") {
+      this.pulseHuntHud(dt);
+    }
+  }
+
+  private pulseHuntHud(dt: number): void {
+    this.huntHudAcc += dt;
+    if (this.huntHudAcc < 0.25) {
+      return;
+    }
+    this.huntHudAcc = 0;
+    void this.refreshDuelPanel();
+  }
+
+  private tickWeaponHeat(dt: number): void {
+    const rate = this.overheated ? HUNT.HEAT_COOL_LOCK : HUNT.HEAT_COOL;
+    this.heat = Math.max(0, this.heat - rate * dt);
+    if (this.overheated && this.heat <= HUNT.HEAT_RECOVER) {
+      this.overheated = false;
+    }
+  }
+
+  private tryHuntFire(): void {
+    if (
+      this.match.mode !== "hunt"
+      || this.match.phase !== "racing"
+      || (this.session !== "player" && !this.adminPilot)
+      || this.overheated
+      || this.fireCool > 0
+      || this.huntHoldLeft() > 0
+      || this.isPortraitPlay()
+    ) {
+      return;
+    }
+    this.heat = Math.min(1, this.heat + HUNT.HEAT_SHOT);
+    if (this.heat >= 1) {
+      this.heat = 1;
+      this.overheated = true;
+    }
+    this.fireCool = HUNT.FIRE_COOLDOWN;
+    const dir = this.flight.forward;
+    const x = this.flight.position.x + dir.x * 2.2;
+    const y = this.flight.position.y + dir.y * 2.2;
+    const z = this.flight.position.z + dir.z * 2.2;
+    this.combat.spawn(x, y, z, dir.x, dir.y, dir.z, true);
+    if (this.match.slot !== null) {
+      this.match.sendShot({ slot: this.match.slot, x, y, z, dx: dir.x, dy: dir.y, dz: dir.z });
+    }
+  }
+
+  private huntHoldLeft(): number {
+    if (this.match.mode !== "hunt" || this.match.phase !== "racing" || !this.isHuntHunter()) {
+      return 0;
+    }
+    return Math.max(0, HUNT.HEAD_START - (performance.now() - this.huntStartAt) / 1000);
+  }
+
+  private isHuntPrey(): boolean {
+    return this.match.mode === "hunt" && this.match.slot === this.match.fleeSlot;
+  }
+
+  private isHuntHunter(): boolean {
+    return this.match.mode === "hunt" && this.match.slot !== null && this.match.slot !== this.match.fleeSlot;
+  }
+
+  private syncHuntButtons(): void {
+    const racing = this.match.mode === "hunt" && this.match.phase === "racing" && this.huntHoldLeft() <= 0;
+    this.touch.setFireVisible(racing);
+    this.touch.setFireHot(this.overheated);
+    const kind = this.match.slot !== null ? this.match.held[this.match.slot] : null;
+    this.touch.setItemVisible(Boolean(kind) && racing, kind ? ITEM_LABEL[kind] : "Ítem");
+  }
+
+  private tryGrabCrate(): void {
+    if (this.match.phase !== "racing" || this.match.slot === null || this.match.held[this.match.slot]) {
+      return;
+    }
+    for (const crate of this.match.crates) {
+      const dx = crate.x - this.flight.position.x;
+      const dy = crate.y - this.flight.position.y;
+      const dz = crate.z - this.flight.position.z;
+      if (dx * dx + dy * dy + dz * dz <= HUNT.ITEM_RADIUS * HUNT.ITEM_RADIUS) {
+        if (this.lastGrabId !== crate.id) {
+          this.lastGrabId = crate.id;
+          this.match.sendGrab(crate.id);
+        }
+        return;
+      }
+    }
+  }
+
+  private tryUseItem(): void {
+    if (this.match.mode !== "hunt" || this.match.phase !== "racing" || this.match.slot === null) {
+      return;
+    }
+    if (!this.match.held[this.match.slot] || this.huntHoldLeft() > 0) {
+      return;
+    }
+    this.match.sendUse();
+  }
+
+  private applyHuntFx(kind: "turbo" | "wind" | "ammo", by: 0 | 1, target?: 0 | 1): void {
+    const me = this.match.slot;
+    const now = performance.now();
+    if (kind === "turbo" && by === me) {
+      this.turboUntil = now + HUNT.TURBO_TIME * 1000;
+    }
+    if (kind === "wind" && target === me) {
+      this.windUntil = now + HUNT.WIND_TIME * 1000;
+    }
+    if (kind === "ammo" && target === me) {
+      this.heat = 1;
+      this.overheated = true;
+      this.duelPanel.setHeat(1, true);
+      this.touch.setFireHot(true);
+    }
+  }
+
+  private huntFlightMods(): { speedMul: number; inputMul: number } | undefined {
+    if (this.match.mode !== "hunt") {
+      return undefined;
+    }
+    const now = performance.now();
+    const turbo = now < this.turboUntil;
+    const wind = now < this.windUntil;
+    if (!turbo && !wind) {
+      return undefined;
+    }
+    return {
+      speedMul: turbo ? HUNT.TURBO_MUL : wind ? HUNT.WIND_MUL : 1,
+      inputMul: wind ? HUNT.WIND_STEER : 1,
+    };
+  }
+
+  private huntArrow(): string {
+    if (!this.isHuntHunter()) {
+      return "";
+    }
+    const remote = this.remoteMesh().group;
+    if (!remote.visible) {
+      return "";
+    }
+    const dx = remote.position.x - this.flight.position.x;
+    const dz = remote.position.z - this.flight.position.z;
+    const want = Math.atan2(dx, -dz);
+    const look = Math.atan2(this.flight.forward.x, -this.flight.forward.z);
+    let deg = ((want - look) * 180) / Math.PI;
+    if (deg < 0) {
+      deg += 360;
+    }
+    const faces = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"];
+    return faces[Math.round(deg / 45) % 8] ?? "↑";
   };
 
   private updateCameraStatus(): void {
@@ -645,7 +1124,27 @@ export class Game {
     this.camera.aspect = this.size.x / this.size.y;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(this.size.x, this.size.y);
+    this.updateOrientationHint();
   };
+}
+
+function pickLivePose(a: DuelPose | null, b: DuelPose | null): DuelPose | null {
+  if (a && b) {
+    return a.spd >= b.spd ? a : b;
+  }
+  return a ?? b;
+}
+
+async function lockLandscape(): Promise<void> {
+  try {
+    const orientation = screen.orientation as ScreenOrientation & { lock?: (mode: string) => Promise<void> };
+    if (typeof orientation.lock !== "function") {
+      return;
+    }
+    await orientation.lock("landscape").catch(() => orientation.lock?.("landscape-primary"));
+  } catch {
+    // iOS y algunos Android no permiten bloquear la orientación
+  }
 }
 
 function inputActive(input: FlightInput, threshold = 0.12): boolean {

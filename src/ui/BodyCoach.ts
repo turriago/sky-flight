@@ -3,9 +3,13 @@ export class BodyCoach {
   private readonly status: HTMLElement;
   private readonly tiltButton: HTMLButtonElement;
   private readonly touchButton: HTMLButtonElement;
+  private readonly chromeButton: HTMLButtonElement;
   private readonly setup: HTMLElement;
+  private readonly browserWarn: HTMLElement;
+  private readonly browserText: HTMLElement;
+  private lastHint = "";
 
-  constructor(root: HTMLElement, onTilt: () => void, onTouch: () => void) {
+  constructor(root: HTMLElement, onTilt: () => void, onTouch: () => void, onChrome: () => void) {
     this.element = document.createElement("div");
     this.element.className = "body-coach hidden";
     this.element.innerHTML = `
@@ -16,17 +20,21 @@ export class BodyCoach {
         <ol class="body-coach-steps">
           <li>Sostén el celular derecho, como un mando.</li>
           <li>Inclina izquierda / derecha para girar.</li>
-          <li>Inclina hacia ti para subir, hacia adelante para bajar.</li>
+          <li>Inclina hacia abajo para bajar, hacia ti para subir.</li>
         </ol>
         <div class="body-coach-gestures">
           <span>Inclinar = girar</span>
-          <span>Hacia ti = subir</span>
-          <span>Adelante = bajar y más rápido</span>
+          <span>Hacia ti / arriba = subir</span>
+          <span>Abajo = bajar</span>
         </div>
-        <p class="body-coach-status" data-status>Pulsa el botón y permite el movimiento si el iPhone lo pide.</p>
+        <p class="body-coach-status" data-status>Elige cómo quieres volar.</p>
+        <div class="browser-warn hidden" data-browser-warn>
+          <p data-browser-text></p>
+          <button class="ui-button chrome-open" type="button" data-chrome>Abrir en Chrome o Safari</button>
+        </div>
         <div class="body-coach-actions">
-          <button class="ui-button primary" type="button" data-tilt>Volar con el celular</button>
-          <button class="ui-button" type="button" data-touch>Usar palanca</button>
+          <button class="ui-button primary" type="button" data-tilt>Celular</button>
+          <button class="ui-button" type="button" data-touch>Botones</button>
         </div>
       </div>
     `;
@@ -34,9 +42,13 @@ export class BodyCoach {
     this.status = this.element.querySelector("[data-status]")!;
     this.tiltButton = this.element.querySelector("[data-tilt]")!;
     this.touchButton = this.element.querySelector("[data-touch]")!;
+    this.chromeButton = this.element.querySelector("[data-chrome]")!;
     this.setup = this.element.querySelector(".body-coach-steps")!;
+    this.browserWarn = this.element.querySelector("[data-browser-warn]")!;
+    this.browserText = this.element.querySelector("[data-browser-text]")!;
     this.tiltButton.addEventListener("click", onTilt);
     this.touchButton.addEventListener("click", onTouch);
+    this.chromeButton.addEventListener("click", onChrome);
   }
 
   show(): void {
@@ -47,13 +59,30 @@ export class BodyCoach {
     this.element.classList.add("hidden");
   }
 
-  setArmed(on: boolean): void {
-    this.tiltButton.textContent = on ? "Recalibrar (celular derecho)" : "Volar con el celular";
-    this.element.classList.toggle("camera-on", on);
-    this.setup.classList.toggle("hidden", on);
+  setSteer(mode: "pick" | "tilt" | "touch"): void {
+    const compact = mode !== "pick";
+    this.element.classList.toggle("compact", compact);
+    this.element.classList.toggle("camera-on", mode === "tilt");
+    this.setup.classList.toggle("hidden", compact);
+    this.tiltButton.classList.toggle("primary", mode !== "touch");
+    this.touchButton.classList.toggle("primary", mode === "touch");
+    this.tiltButton.textContent = mode === "tilt" ? "Recalibrar" : "Celular";
+    this.touchButton.textContent = "Botones";
   }
 
   setHint(text: string): void {
+    if (text === this.lastHint) {
+      return;
+    }
+    this.lastHint = text;
     this.status.textContent = text;
+  }
+
+  setChromeHint(on: boolean, text = ""): void {
+    this.browserWarn.classList.toggle("hidden", !on);
+    this.element.classList.toggle("needs-browser", on);
+    if (on && text) {
+      this.browserText.textContent = text;
+    }
   }
 }
